@@ -32,8 +32,8 @@ CLOB_API        = "https://clob.polymarket.com"
 CONFIG_PATH     = os.path.join(os.path.dirname(__file__), "markets_config.json")
 MAX_SCAN_EVENTS = 3000      # scan up to this many events
 SCAN_PAGE_SIZE  = 100
-MIN_VOLUME      = 5_000     # skip events with less than $5K total volume
-MAX_MARKETS_PER_CAT = 20    # max markets to track per category
+MIN_VOLUME      = 1_000      # skip events with less than $1K total volume
+MAX_MARKETS_PER_CAT = 40    # max markets to track per category
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL   = "gpt-4o-mini"   # cheapest OpenAI model with good JSON output
@@ -45,25 +45,38 @@ KEYWORD_MAP = {
         "iran", "iranian", "hormuz", "tehran", "irgc", "khamenei",
         "nuclear deal", "npt", "pahlavi", "persian gulf", "isfahan",
         "enrichment of uranium", "war on iran", "strike iran",
-        "ceasefire.*iran", "iran.*ceasefire",
+        "ceasefire.*iran", "iran.*ceasefire", "us.*iran", "iran.*us",
+        "israel.*iran", "iran.*israel", "reza pahlavi", "iran coup",
+        "iran regime", "iran nuke", "iran nuclear", "iran sanction",
+        "iran oil", "iran election", "iran internet", "iran kurds",
     ],
     "interest_rates": [
         "fed ", "fomc", "rate cut", "rate hike", "interest rate",
         "federal reserve", "fed decision", "fed rate", "emergency cut",
         "basis point", "fed chair", "monetary policy", "ecb interest",
         "bank of england rate", "pboc rate", "people's bank of china rate",
+        "powell", "warsh", "fed abolish", "credit card interest",
+        "ecb rate", "boe rate", "bank of japan", "boj rate",
+        "quantitative easing", "quantitative tightening",
     ],
     "economy_inflation": [
         "recession", "inflation", " cpi", "gdp growth", "gdp ",
         "unemployment", "debt downgrade", "circuit breaker",
         "national debt", "stagflation", "annual inflation",
-        "annual gdp", "world gdp",
+        "annual gdp", "world gdp", "tariff", "trade war",
+        "deficit", "debt ceiling", "credit rating", "downgrade",
+        "nfp", "payroll", "job", "consumer price", "pce",
+        "core inflation", "hyperinflation",
     ],
     "markets_assets": [
         "s&p 500", "(spx)", "gold (gc)", "crude oil (cl)", "wti",
         "gold vs", "bitcoin vs. gold", "nasdaq 100", "(ndx)",
         "gold futures", "oil futures", "gold hit", "crude oil hit",
         "gold above", "oil above", "s&p.*hit", "spx.*hit",
+        "dow jones", "vix ", "russell 2000", "brent crude",
+        "natural gas", "copper price", "silver price",
+        "stock market", "bear market", "bull market",
+        "market crash", "market high", "all time high",
     ],
 }
 
