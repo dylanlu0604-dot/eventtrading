@@ -22,6 +22,7 @@ Usage:
 import json
 import os
 import sys
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -293,10 +294,11 @@ Return ONLY a JSON array, one object per event, same order:
         for e in batch:
             eid = str(e['id'])
             cls = cls_map.get(eid)
-            result = build_result(e, cls) if (cls and cls.get('category') and cls.get('market_id')) \
-                     else keyword_fallback_single(e)
-            if result:
-                results.append(result)
+            if cls and cls.get('category') and cls.get('market_id'):
+                items_out = build_result(e, cls)
+            else:
+                items_out = keyword_fallback_single(e)
+            results.extend(items_out)
 
         print(f"  Batch {batch_start//BATCH + 1}: {len(cls_map)} classified")
         time.sleep(0.3)
@@ -308,9 +310,7 @@ Return ONLY a JSON array, one object per event, same order:
 def keyword_fallback(events: list[dict]) -> list[dict]:
     results = []
     for e in events:
-        r = keyword_fallback_single(e)
-        if r:
-            results.append(r)
+        results.extend(keyword_fallback_single(e))
     return results
 
 
@@ -331,23 +331,98 @@ def keyword_fallback_single(e: dict) -> dict | None:
     return None
 
 
-def build_result(e: dict, cls: dict) -> dict | None:
-    cat    = cls.get('category')
-    mid    = str(cls.get('market_id', ''))
-    outcome= cls.get('outcome', 'Yes')
+DATE_RE = re.compile(
+    r'\b(january|february|march|april|may|june|july|august|september|october|november|december'
+    r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec'
+    r'|\d{1,2}/\d{1,2})\b',
+    re.IGNORECASE
+)
 
+
+def is_date_series(markets: list[dict]) -> bool:
+    """Return True if ≥2 sub-markets look like date endpoints."""
+    count = sum(1 for m in markets if DATE_RE.search(m.get('question', '')))
+    return count >= 2
+
+
+def build_result(e: dict, cls: dict) -> list[dict]:
+    """Return one or more result dicts for an event.
+    Date-series events (e.g. 'ceasefire by March 31 / April 15 / …')
+    return one entry per date sub-market, all sharing a group_id.
+    Other events return a single entry.
+    """
+    cat     = cls.get('category')
+    mid     = str(cls.get('market_id', ''))
+    outcome = cls.get('outcome', 'Yes')
     markets = e.get('markets', [])
-    market  = next((m for m in markets if str(m.get('id')) == mid), None)
-    if not market and markets:
-        market = markets[0]
-    if not market:
-        return None
 
-    return _make_result(e, cat, market, outcome)
+    if is_date_series(markets):
+        return _make_multi(e, cat, outcome)
+    else:
+        market = next((m for m in markets if str(m.get('id')) == mid), None)
+        if not market and markets:
+            market = markets[0]
+        if not market:
+            return []
+        return [_make_single(e, cat, market, outcome)]
 
 
-def _make_result(e: dict, cat: str, market: dict, outcome: str) -> dict:
-    # Extract clobTokenId for the selected outcome
+def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
+    """One result per date sub-market, linked by group_id."""
+    group_id = _make_id(e.get('title', ''))
+    slug     = e.get('slug') or e.get('ticker') or ''
+    results  = []
+
+    for m in e.get('markets', []):
+        q        = m.get('question', '')
+        outcomes = m.get('outcomes', '[]')
+        prices   = m.get('outcomePrices', '[]')
+        tokens   = m.get('clobTokenIds', '[]')
+        if isinstance(outcomes, str): outcomes = json.loads(outcomes)
+        if isinstance(prices,   str): prices   = json.loads(prices)
+        if isinstance(tokens,   str): tokens   = json.loads(tokens)
+
+        if outcome not in outcomes:
+            continue
+
+        token_id = None
+        for o, t in zip(outcomes, tokens):
+            if o == outcome:
+                token_id = t
+                break
+
+        # Extract a short date label from the question
+        sub_label = _extract_date_label(q) or q[:40]
+        sub_id    = (group_id + '_' + _make_id(sub_label))[:60]
+
+        # sub-market volume from outcomePrices position
+        try:
+            idx      = list(outcomes).index(outcome)
+            sub_vol  = round(float(prices[idx]) * float(e.get('volume') or 0))
+        except Exception:
+            sub_vol  = 0
+
+        results.append({
+            "id":            sub_id,
+            "group_id":      group_id,
+            "event_id":      e['id'],
+            "category":      cat,
+            "label":         e.get('title', ''),
+            "sub_label":     sub_label,
+            "question":      q,
+            "market_id":     m.get('id'),
+            "outcome":       outcome,
+            "clob_token_id": token_id,
+            "polymarket_url":f"https://polymarket.com/event/{slug}",
+            "volume":        round(float(e.get('volume') or 0)),
+            "volume_24h":    round(float(e.get('volume24hr') or 0)),
+            "liquidity":     round(float(e.get('liquidity') or 0)),
+        })
+
+    return results
+
+
+def _make_single(e: dict, cat: str, market: dict, outcome: str) -> dict:
     tokens   = market.get('clobTokenIds', '[]')
     outcomes = market.get('outcomes', '[]')
     if isinstance(tokens, str):   tokens   = json.loads(tokens)
@@ -360,63 +435,134 @@ def _make_result(e: dict, cat: str, market: dict, outcome: str) -> dict:
             break
 
     slug = e.get('slug') or e.get('ticker') or ''
-
     return {
-        "id":           _make_id(e.get('title', '')),
-        "event_id":     e['id'],
-        "category":     cat,
-        "label":        e.get('title', ''),
-        "question":     market.get('question', ''),
-        "market_id":    market.get('id'),
-        "outcome":      outcome,
-        "clob_token_id":token_id,
-        "polymarket_url": f"https://polymarket.com/event/{slug}",
-        "volume":       round(float(e.get('volume') or 0)),
-        "volume_24h":   round(float(e.get('volume24hr') or 0)),
-        "liquidity":    round(float(e.get('liquidity') or 0)),
+        "id":            _make_id(e.get('title', '')),
+        "group_id":      None,
+        "event_id":      e['id'],
+        "category":      cat,
+        "label":         e.get('title', ''),
+        "sub_label":     None,
+        "question":      market.get('question', ''),
+        "market_id":     market.get('id'),
+        "outcome":       outcome,
+        "clob_token_id": token_id,
+        "polymarket_url":f"https://polymarket.com/event/{slug}",
+        "volume":        round(float(e.get('volume') or 0)),
+        "volume_24h":    round(float(e.get('volume24hr') or 0)),
+        "liquidity":     round(float(e.get('liquidity') or 0)),
     }
 
 
+def _extract_date_label(question: str) -> str | None:
+    """Pull a short date string from a question like 'ceasefire by March 31?'."""
+    m = re.search(
+        r'\b(january|february|march|april|may|june|july|august|september|october|november|december|'
+        r'jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b[\s\w,]*?\d{1,2}(?:,\s*\d{4})?',
+        question, re.IGNORECASE
+    )
+    if m:
+        return m.group(0).strip()[:20]
+    # fallback: last "by <something>" phrase
+    m2 = re.search(r'by\s+(.{3,20}?)[\?$]', question, re.IGNORECASE)
+    if m2:
+        return m2.group(1).strip()[:20]
+    return None
+
+
 def _make_id(title: str) -> str:
-    import re
     s = title.lower()
     s = re.sub(r'[^a-z0-9 ]', '', s)
     s = re.sub(r'\s+', '_', s.strip())
     return s[:50]
 
 
+def keyword_fallback_single(e: dict) -> list[dict]:
+    cat = e.get('_kw_cat')
+    if not cat:
+        return []
+    markets = e.get('markets', [])
+    if not markets:
+        return []
+    if is_date_series(markets):
+        return _make_multi(e, cat, 'Yes')
+    for m in markets:
+        outcomes = m.get('outcomes', '[]')
+        if isinstance(outcomes, str): outcomes = json.loads(outcomes)
+        if 'Yes' in outcomes:
+            return [_make_single(e, cat, m, 'Yes')]
+    return []
+
+
 # ── Step 5: Deduplicate + rank + limit ─────────────────────────────────────────
 def deduplicate(results: list[dict]) -> list[dict]:
-    """Remove duplicate markets (same question across different events), keep highest volume."""
     from collections import defaultdict
 
-    # Group by question text similarity
-    seen_questions = {}
-    deduped = []
+    # Deduplicate singles by question; keep all sub-markets of a group together
+    seen_questions = set()
+    seen_groups    = set()
+    deduped        = []
 
     for r in sorted(results, key=lambda x: x.get('volume', 0), reverse=True):
-        q_key = r.get('question', '')[:60].lower().strip()
-        if q_key and q_key in seen_questions:
-            continue
-        seen_questions[q_key] = True
-        deduped.append(r)
+        gid = r.get('group_id')
+        if gid:
+            # Include every sub-market of a group (dedupe by group, not question)
+            q_key = (gid, r.get('market_id', ''))
+            if q_key in seen_questions:
+                continue
+            seen_questions.add(q_key)
+            deduped.append(r)
+        else:
+            q_key = r.get('question', '')[:60].lower().strip()
+            if q_key in seen_questions:
+                continue
+            seen_questions.add(q_key)
+            deduped.append(r)
 
-    # Cap per category
+    # Filter invalid categories
+    deduped = [r for r in deduped
+               if r.get('category') and r['category'] != 'null'
+               and r['category'] in KEYWORD_MAP]
+
+    # Cap per category — count groups as one slot
     by_cat = defaultdict(list)
     for r in deduped:
-        cat = r.get('category')
-        # Skip if category is null, "null", or not one of our 4 valid categories
-        if not cat or cat == 'null' or cat not in KEYWORD_MAP:
-            continue
-        by_cat[cat].append(r)
+        by_cat[r['category']].append(r)
 
     final = []
     for cat, items in by_cat.items():
-        items.sort(key=lambda x: x.get('volume', 0), reverse=True)
-        final.extend(items[:MAX_MARKETS_PER_CAT])
+        # Sort: groups first (by volume), then singles (by volume)
+        groups  = {}
+        singles = []
+        for r in items:
+            gid = r.get('group_id')
+            if gid:
+                if gid not in groups:
+                    groups[gid] = []
+                groups[gid].append(r)
+            else:
+                singles.append(r)
+
+        # Sort groups by volume, singles by volume
+        sorted_groups  = sorted(groups.values(),  key=lambda g: g[0].get('volume', 0), reverse=True)
+        sorted_singles = sorted(singles, key=lambda x: x.get('volume', 0), reverse=True)
+
+        # Interleave: add groups (all sub-markets) then singles up to cap
+        slots = 0
+        for grp in sorted_groups:
+            if slots >= MAX_MARKETS_PER_CAT:
+                break
+            final.extend(grp)
+            slots += 1   # a group counts as 1 slot
+
+        for s in sorted_singles:
+            if slots >= MAX_MARKETS_PER_CAT:
+                break
+            final.append(s)
+            slots += 1
 
     final.sort(key=lambda x: (
         list(KEYWORD_MAP.keys()).index(x['category']),
+        x.get('group_id') or '',
         -x.get('volume', 0)
     ))
 
