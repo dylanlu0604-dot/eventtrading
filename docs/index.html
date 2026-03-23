@@ -1,566 +1,570 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Polymarket Risk Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0d0f14; --bg2: #13161e; --bg3: #1a1e2a;
-  --border: #252a38; --border2: #2e3448;
-  --text: #e2e8f0; --text2: #94a3b8; --text3: #64748b;
-  --red: #f87171; --red-dim: rgba(248,113,113,.12);
-  --blue: #60a5fa; --blue-dim: rgba(96,165,250,.12);
-  --amber: #fbbf24; --amber-dim: rgba(251,191,36,.12);
-  --green: #34d399; --green-dim: rgba(52,211,153,.12);
-  --up: #34d399; --down: #f87171;
-  --r: 10px;
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0b0d12;--bg2:#12151d;--bg3:#181c26;--bg4:#1e2330;
+  --border:#1e2330;--border2:#252d3d;--border3:#2e3a50;
+  --text:#e2e8f0;--text2:#8899b0;--text3:#50637a;
+  --red:#f87171;--red-dim:rgba(248,113,113,.1);
+  --blue:#60a5fa;--blue-dim:rgba(96,165,250,.1);
+  --amber:#fbbf24;--amber-dim:rgba(251,191,36,.1);
+  --green:#34d399;--green-dim:rgba(52,211,153,.1);
+  --up:#34d399;--down:#f87171;
 }
-html { scroll-behavior: smooth; }
-body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; line-height: 1.6; min-height: 100vh; }
-.page { max-width: 1280px; margin: 0 auto; padding: 0 20px 60px; }
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:13px;display:flex;flex-direction:column}
 
-/* Header */
-.header { display: flex; align-items: center; justify-content: space-between; padding: 28px 0 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header-left h1 { font-size: 21px; font-weight: 700; letter-spacing: -.3px; display: flex; align-items: center; gap: 10px; }
-.header-left h1 .logo { width: 32px; height: 32px; background: linear-gradient(135deg,#6366f1,#8b5cf6); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 17px; }
-.header-left p { color: var(--text2); font-size: 12.5px; margin-top: 3px; }
-.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.update-badge { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 6px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-.refresh-btn { background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text); cursor: pointer; transition: all .15s; }
-.refresh-btn:hover { background: var(--border2); color: #fff; }
-
-/* Alerts */
-.alerts-section { margin: 24px 0 0; }
-.alerts-header { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--text2); margin-bottom: 12px; }
-.alerts-header .alert-title-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
-.alerts-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.alert-pill { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; text-decoration: none; color: var(--text); transition: border-color .2s; }
-.alert-pill:hover { border-color: var(--border2); }
-.alert-pill.rising { border-left: 3px solid var(--up); }
-.alert-pill.falling { border-left: 3px solid var(--down); }
-.alert-pill .a-arrow { font-size: 13px; }
-.alert-pill .a-delta { font-weight: 700; }
-.alert-pill.rising .a-delta { color: var(--up); }
-.alert-pill.falling .a-delta { color: var(--down); }
-.alert-pill .a-prob { color: var(--text3); font-size: 11.5px; }
-.no-alerts { color: var(--text3); font-size: 13px; padding: 8px 0; }
-
-/* Sections */
-.sections { margin-top: 32px; display: flex; flex-direction: column; gap: 36px; }
-.section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-.section-icon { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
-.section-icon.red   { background: var(--red-dim); }
-.section-icon.blue  { background: var(--blue-dim); }
-.section-icon.amber { background: var(--amber-dim); }
-.section-icon.green { background: var(--green-dim); }
-.section-title { font-size: 15.5px; font-weight: 700; }
-.section-count { margin-left: auto; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px; font-size: 11.5px; color: var(--text2); }
-
-/* Cards */
-.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 12px; }
-.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); padding: 15px; cursor: pointer; transition: border-color .2s, transform .15s, box-shadow .2s; position: relative; overflow: hidden; }
-.card:hover { border-color: var(--border2); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
-.card.active { border-color: var(--border2); box-shadow: 0 0 0 1px var(--border2); }
-.card-accent { position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: var(--r) var(--r) 0 0; }
-.card-accent.red   { background: var(--red); }
-.card-accent.blue  { background: var(--blue); }
-.card-accent.amber { background: var(--amber); }
-.card-accent.green { background: var(--green); }
-.card-label { font-size: 12.5px; font-weight: 500; color: var(--text); line-height: 1.4; margin-top: 5px; min-height: 34px; }
-.card-bottom { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 12px; gap: 8px; }
-.card-prob { font-size: 27px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
-.card-prob.red   { color: var(--red); }
-.card-prob.blue  { color: var(--blue); }
-.card-prob.amber { color: var(--amber); }
-.card-prob.green { color: var(--green); }
-.card-delta { font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; display: inline-block; }
-.card-delta.up   { background: rgba(52,211,153,.15); color: var(--up); }
-.card-delta.down { background: rgba(248,113,113,.15); color: var(--down); }
-.card-delta.flat { background: var(--bg3); color: var(--text3); }
-.card-sparkline { margin-top: 10px; height: 38px; }
-.card-sparkline canvas { width: 100% !important; height: 38px !important; }
-
-/* Detail panel */
-.detail-panel { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--r); padding: 18px; margin-top: 12px; display: none; }
-.detail-panel.open { display: block; }
-.detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
-.detail-title { font-size: 14.5px; font-weight: 700; }
-.detail-link { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--text2); text-decoration: none; transition: all .15s; }
-.detail-link:hover { color: #fff; border-color: var(--border2); }
-.detail-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 8px; margin-bottom: 16px; }
-.stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
-.stat-label { font-size: 10.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; }
-.stat-value { font-size: 17px; font-weight: 700; margin-top: 2px; }
-
-/* Range selector */
-.chart-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
-.chart-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .6px; }
-.range-btns { display: flex; gap: 4px; }
-.range-btn {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 10px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text3);
-  cursor: pointer;
-  transition: all .15s;
-  letter-spacing: .3px;
+/* ── Top bar ── */
+.topbar{
+  display:flex;align-items:center;gap:12px;
+  padding:0 16px;height:44px;min-height:44px;
+  background:var(--bg2);border-bottom:1px solid var(--border2);
+  flex-shrink:0;
 }
-.range-btn:hover { color: var(--text); border-color: var(--border2); }
-.range-btn.active {
-  background: var(--border2);
-  border-color: var(--border2);
-  color: var(--text);
+.topbar-logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;letter-spacing:-.2px}
+.topbar-logo .icon{width:24px;height:24px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px}
+.topbar-sep{width:1px;height:20px;background:var(--border2)}
+.topbar-sub{color:var(--text3);font-size:11.5px}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.badge{background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.refresh-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--text2);cursor:pointer;transition:all .15s}
+.refresh-btn:hover{color:var(--text);border-color:var(--border3)}
+
+/* ── Alerts strip ── */
+.alerts-strip{
+  display:flex;align-items:center;gap:8px;
+  padding:0 14px;height:34px;min-height:34px;
+  background:var(--bg2);border-bottom:1px solid var(--border);
+  overflow-x:auto;flex-shrink:0;white-space:nowrap;
 }
-.range-btn.active.red   { border-color: var(--red);   color: var(--red); }
-.range-btn.active.blue  { border-color: var(--blue);  color: var(--blue); }
-.range-btn.active.amber { border-color: var(--amber); color: var(--amber); }
-.range-btn.active.green { border-color: var(--green); color: var(--green); }
+.alerts-strip::-webkit-scrollbar{height:0}
+.strip-label{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);flex-shrink:0}
+.strip-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:4px;font-size:11.5px;cursor:pointer;transition:opacity .15s;flex-shrink:0}
+.strip-pill:hover{opacity:.75}
+.strip-pill.up{background:rgba(52,211,153,.12);color:var(--up)}
+.strip-pill.dn{background:rgba(248,113,113,.12);color:var(--down)}
+.strip-pill .sv{font-weight:700}
 
-/* No-data note */
-.range-note { font-size: 11px; color: var(--text3); margin-top: 6px; text-align: center; font-style: italic; }
+/* ── Main split layout ── */
+.main{display:flex;flex:1;overflow:hidden}
 
-.detail-chart-wrap { position: relative; height: 210px; }
+/* ── LEFT PANEL ── */
+.left-panel{
+  width:420px;min-width:300px;max-width:520px;
+  display:flex;flex-direction:column;
+  border-right:1px solid var(--border2);
+  flex-shrink:0;overflow:hidden;
+}
+.list-header{
+  display:grid;
+  grid-template-columns:1fr 58px 68px 68px 80px;
+  gap:0;padding:6px 12px;
+  background:var(--bg3);border-bottom:1px solid var(--border2);
+  font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);
+  flex-shrink:0;
+}
+.list-header span{text-align:right}
+.list-header span:first-child{text-align:left}
+.list-body{overflow-y:auto;flex:1}
+.list-body::-webkit-scrollbar{width:4px}
+.list-body::-webkit-scrollbar-track{background:transparent}
+.list-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 
-/* Footer */
-.footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--text3); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-.footer a { color: var(--text2); text-decoration: none; }
-.footer a:hover { color: var(--text); }
+/* Category header row */
+.cat-header{
+  display:flex;align-items:center;gap:7px;
+  padding:8px 12px 5px;
+  background:var(--bg);
+  border-top:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--text3);
+  position:sticky;top:0;z-index:2;
+}
+.cat-dot{width:7px;height:7px;border-radius:50%}
+.cat-dot.red{background:var(--red)}
+.cat-dot.blue{background:var(--blue)}
+.cat-dot.amber{background:var(--amber)}
+.cat-dot.green{background:var(--green)}
+
+/* Market row */
+.mrow{
+  display:grid;
+  grid-template-columns:1fr 58px 68px 68px 80px;
+  align-items:center;
+  gap:0;padding:7px 12px;
+  border-bottom:1px solid var(--border);
+  cursor:pointer;transition:background .12s;
+}
+.mrow:hover{background:var(--bg3)}
+.mrow.selected{background:var(--bg3);border-left:2px solid var(--accent-color,#60a5fa)}
+.mrow .m-label{font-size:12px;color:var(--text);line-height:1.3;padding-right:6px;white-space:normal}
+.mrow .m-prob{font-size:14px;font-weight:800;letter-spacing:-.5px;text-align:right}
+.mrow .m-prob.red{color:var(--red)}
+.mrow .m-prob.blue{color:var(--blue)}
+.mrow .m-prob.amber{color:var(--amber)}
+.mrow .m-prob.green{color:var(--green)}
+.mrow .m-delta{font-size:11px;font-weight:600;text-align:right;padding:1px 5px;border-radius:3px}
+.mrow .m-delta.up{color:var(--up);background:rgba(52,211,153,.1)}
+.mrow .m-delta.dn{color:var(--down);background:rgba(248,113,113,.1)}
+.mrow .m-delta.fl{color:var(--text3)}
+.mrow .m-spark{height:28px;position:relative}
+.mrow .m-spark canvas{width:100%!important;height:28px!important}
+
+/* ── RIGHT PANEL ── */
+.right-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+
+/* Empty state */
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text3)}
+.empty-state .hint{font-size:13px}
+
+/* Chart area */
+.chart-area{flex:1;display:flex;flex-direction:column;padding:20px 24px;overflow-y:auto;gap:16px}
+.chart-area::-webkit-scrollbar{width:4px}
+.chart-area::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* Chart header */
+.chart-head{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.chart-title{font-size:17px;font-weight:700;letter-spacing:-.3px}
+.chart-polylink{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 10px;font-size:11.5px;color:var(--text2);text-decoration:none;transition:all .15s;white-space:nowrap}
+.chart-polylink:hover{color:var(--text);border-color:var(--border3)}
+
+/* Big prob + stats row */
+.chart-stats{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.big-prob{font-size:40px;font-weight:800;letter-spacing:-2px;line-height:1}
+.big-prob.red{color:var(--red)}
+.big-prob.blue{color:var(--blue)}
+.big-prob.amber{color:var(--amber)}
+.big-prob.green{color:var(--green)}
+.stats-boxes{display:flex;flex-wrap:wrap;gap:8px}
+.sbox{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:8px 12px;min-width:90px}
+.sbox-label{font-size:9.5px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.sbox-val{font-size:15px;font-weight:700;margin-top:2px}
+.sbox-val.up{color:var(--up)}
+.sbox-val.dn{color:var(--down)}
+.sbox-val.neu{color:var(--text2)}
+.sbox-val.vol{color:var(--text);font-size:13px}
+
+/* Range buttons */
+.range-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.range-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)}
+.range-btns{display:flex;gap:4px}
+.rbtn{background:var(--bg3);border:1px solid var(--border2);border-radius:5px;padding:3px 10px;font-size:11.5px;font-weight:600;color:var(--text3);cursor:pointer;transition:all .15s}
+.rbtn:hover{color:var(--text)}
+.rbtn.active{background:var(--bg4);border-color:var(--border3);color:var(--text)}
+.rbtn.active.red  {border-color:var(--red);  color:var(--red)}
+.rbtn.active.blue {border-color:var(--blue); color:var(--blue)}
+.rbtn.active.amber{border-color:var(--amber);color:var(--amber)}
+.rbtn.active.green{border-color:var(--green);color:var(--green)}
+
+/* Main chart */
+.chart-wrap{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:16px;position:relative;height:280px;flex-shrink:0}
+.chart-wrap canvas{max-height:248px}
+.range-note{font-size:10.5px;color:var(--text3);text-align:right;margin-top:4px;font-style:italic}
 
 /* Loading */
-.loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text2); }
-.spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:14px;color:var(--text2);flex:1}
+.spinner{width:32px;height:32px;border:2.5px solid var(--border2);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
 
-@media (max-width: 600px) {
-  .cards-grid { grid-template-columns: 1fr; }
-  .card-prob { font-size: 23px; }
-  .range-btns { flex-wrap: wrap; }
+@media(max-width:768px){
+  .left-panel{width:100%;max-width:none;border-right:none;border-bottom:1px solid var(--border2)}
+  .main{flex-direction:column}
+  .right-panel{min-height:400px}
 }
 </style>
 </head>
 <body>
-<div class="page">
 
-<header class="header">
-  <div class="header-left">
-    <h1><span class="logo">⚡</span>Polymarket Risk Dashboard</h1>
-    <p>Real-time prediction market probabilities · Iran · Fed · Economy · S&amp;P 500 · Gold · Crude Oil</p>
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-logo"><span class="icon">⚡</span>Polymarket Risk Dashboard</div>
+  <div class="topbar-sep"></div>
+  <span class="topbar-sub">Iran · Fed · Economy · S&P 500 · Gold · Crude Oil</span>
+  <div class="topbar-right">
+    <div class="badge" id="lastUpdate"><span class="dot"></span><span>Loading…</span></div>
+    <button class="refresh-btn" onclick="loadData()">↻</button>
   </div>
-  <div class="header-right">
-    <div class="update-badge" id="lastUpdate"><span class="dot"></span><span>Loading…</span></div>
-    <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
-  </div>
-</header>
-
-<div id="app">
-  <div class="loading"><div class="spinner"></div><span>Fetching market data…</span></div>
 </div>
 
-<footer class="footer">
-  <span>Data from <a href="https://polymarket.com" target="_blank">Polymarket</a> via Gamma API · Auto-updated every 30 min via GitHub Actions</span>
-  <span id="footerTs"></span>
-</footer>
+<!-- Alerts strip -->
+<div class="alerts-strip" id="alertsStrip">
+  <span class="strip-label">24h Moves</span>
+</div>
+
+<!-- Main split -->
+<div class="main">
+  <!-- LEFT: market list -->
+  <div class="left-panel">
+    <div class="list-header">
+      <span>Market</span>
+      <span>Prob</span>
+      <span>24h</span>
+      <span>7d</span>
+      <span>30d trend</span>
+    </div>
+    <div class="list-body" id="listBody">
+      <div class="loading"><div class="spinner"></div><span>Loading…</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: chart panel -->
+  <div class="right-panel" id="rightPanel">
+    <div class="empty-state">
+      <span style="font-size:32px">←</span>
+      <span class="hint">Select a market to view its history</span>
+    </div>
+  </div>
 </div>
 
 <script>
-const DATA_URL = './data.json';
-const ALERT_THRESHOLD = 0.025;
-const REFRESH_MS = 5 * 60 * 1000;
+const DATA_URL='./data.json';
+const REFRESH_MS=5*60*1000;
 
-// Time range definitions (ms back from now; null = all)
-const RANGES = [
-  { key: '1M',  ms: 30  * 24 * 3600 * 1000, label: '1M'  },
-  { key: '3M',  ms: 90  * 24 * 3600 * 1000, label: '3M'  },
-  { key: '6M',  ms: 180 * 24 * 3600 * 1000, label: '6M'  },
-  { key: '12M', ms: 365 * 24 * 3600 * 1000, label: '12M' },
-  { key: 'ALL', ms: null,                    label: 'ALL' },
+const RANGES=[
+  {key:'1M', ms:30*24*3600*1000,  label:'1M'},
+  {key:'3M', ms:90*24*3600*1000,  label:'3M'},
+  {key:'6M', ms:180*24*3600*1000, label:'6M'},
+  {key:'12M',ms:365*24*3600*1000, label:'12M'},
+  {key:'ALL',ms:null,             label:'ALL'},
 ];
 
-const COLORS = {
-  red:   { main:'#f87171', dim:'rgba(248,113,113,.12)' },
-  blue:  { main:'#60a5fa', dim:'rgba(96,165,250,.12)'  },
-  amber: { main:'#fbbf24', dim:'rgba(251,191,36,.12)'  },
-  green: { main:'#34d399', dim:'rgba(52,211,153,.12)'  },
+const COLORS={
+  red:  {main:'#f87171',dim:'rgba(248,113,113,.12)'},
+  blue: {main:'#60a5fa',dim:'rgba(96,165,250,.12)'},
+  amber:{main:'#fbbf24',dim:'rgba(251,191,36,.12)'},
+  green:{main:'#34d399',dim:'rgba(52,211,153,.12)'},
 };
 
-let DATA = null, activeDetail = null;
-const sparkCharts = {}, detailCharts = {};
-// Track selected range per market: { [id]: rangeKey }
-const activeRanges = {};
+let DATA=null, selectedId=null, selectedRange='3M', mainChart=null;
+const sparkCharts={};
+const CAT_ORDER=['iran_geopolitical','fed_rates','economy_macro','markets_assets'];
 
-// ── Utils ──────────────────────────────────────────────────────────
-const pct  = v => v == null ? '—' : (v*100).toFixed(1)+'%';
-const pctN = v => v == null ? null : +(v*100).toFixed(3);
+// ── Utils ──────────────────────────────────────────────────
+const pct  = v => v==null ? '—' : (v*100).toFixed(1)+'%';
+const pctN = v => v==null ? null : +(v*100).toFixed(3);
 
-function getDeltaSince(history, msAgo) {
-  if (!history || history.length < 2) return null;
-  const now = history[history.length-1].v;
-  const cutoff = Date.now() - msAgo;
-  let prev = history[0].v;
-  for (const h of history) {
-    if (new Date(h.t).getTime() <= cutoff) prev = h.v;
+function fmtVol(v){
+  if(!v) return '—';
+  if(v>=1e6) return '$'+(v/1e6).toFixed(2)+'M';
+  if(v>=1e3) return '$'+(v/1e3).toFixed(0)+'K';
+  return '$'+v;
+}
+
+function getDelta(history, msAgo){
+  if(!history||history.length<2) return null;
+  const now=history[history.length-1].v;
+  const cutoff=Date.now()-msAgo;
+  let prev=history[0].v;
+  for(const h of history){
+    if(new Date(h.t).getTime()<=cutoff) prev=h.v;
     else break;
   }
-  return now - prev;
+  return now-prev;
 }
-const delta24h = h => getDeltaSince(h, 24*3600*1000);
-const delta7d  = h => getDeltaSince(h, 7*24*3600*1000);
+const d24h = h => getDelta(h, 24*3600*1000);
+const d7d  = h => getDelta(h, 7*24*3600*1000);
 
-function filterHistory(history, rangeKey) {
-  if (!history) return [];
-  const r = RANGES.find(x => x.key === rangeKey);
-  if (!r || r.ms === null) return history;
-  const cutoff = Date.now() - r.ms;
-  return history.filter(h => new Date(h.t).getTime() >= cutoff);
+function filterHistory(history, rangeKey){
+  if(!history) return [];
+  const r=RANGES.find(x=>x.key===rangeKey);
+  if(!r||r.ms===null) return history;
+  const cutoff=Date.now()-r.ms;
+  return history.filter(h=>new Date(h.t).getTime()>=cutoff);
 }
 
-function formatTime(iso) {
+function sparkStats(history){
+  const cutoff=Date.now()-30*24*3600*1000;
+  let pts=(history||[]).filter(h=>new Date(h.t).getTime()>=cutoff);
+  if(pts.length<5) pts=(history||[]).slice(-200);
+  if(!pts.length) return {min:0,max:100,minV:0,maxV:100};
+  const vals=pts.map(h=>h.v*100);
+  const mn=Math.min(...vals), mx=Math.max(...vals);
+  return {min:mn, max:mx, minV:mn, maxV:mx};
+}
+
+function formatTime(iso){
   return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
 }
-function relTime(iso) {
-  const s = Math.floor((Date.now()-new Date(iso))/1000);
-  if (s < 60) return s+'s ago';
-  if (s < 3600) return Math.floor(s/60)+'m ago';
-  if (s < 86400) return Math.floor(s/3600)+'h ago';
+function relTime(iso){
+  const s=Math.floor((Date.now()-new Date(iso))/1000);
+  if(s<60) return s+'s ago';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';
 }
-function deltaLabel(d) {
-  if (d == null) return { cls:'flat', text:'—' };
-  if (Math.abs(d) < 0.001) return { cls:'flat', text:'±0.0pp' };
-  const sign = d>0?'+':'';
-  return { cls: d>0?'up':'down', text: sign+(d*100).toFixed(1)+'pp 24h' };
+
+function deltaClass(d){
+  if(d==null||Math.abs(d)<0.0005) return 'fl';
+  return d>0?'up':'dn';
+}
+function deltaStr(d){
+  if(d==null) return '—';
+  if(Math.abs(d)<0.0005) return '±0.0pp';
+  return (d>0?'+':'')+(d*100).toFixed(1)+'pp';
 }
 
-// ── Load ───────────────────────────────────────────────────────────
-async function loadData() {
-  try {
-    const r = await fetch(DATA_URL+'?_='+Date.now());
-    DATA = await r.json();
-    render();
-  } catch(e) {
-    document.getElementById('app').innerHTML =
-      '<div class="loading"><span style="color:#f87171">⚠ Failed to load data.</span></div>';
+// ── Load ──────────────────────────────────────────────────
+async function loadData(){
+  try{
+    const r=await fetch(DATA_URL+'?_='+Date.now());
+    DATA=await r.json();
+    renderAll();
+  } catch(e){
+    document.getElementById('listBody').innerHTML='<div class="loading"><span style="color:var(--down)">⚠ Failed to load</span></div>';
   }
 }
 
-// ── Alerts ─────────────────────────────────────────────────────────
-function buildAlerts(markets) {
-  return Object.values(markets)
-    .map(m => ({ m, d: delta24h(m.history) }))
-    .filter(x => x.d != null && Math.abs(x.d) >= ALERT_THRESHOLD)
-    .sort((a,b) => Math.abs(b.d)-Math.abs(a.d))
-    .slice(0, 12);
-}
+// ── Alerts strip ───────────────────────────────────────────
+function renderAlerts(markets){
+  const strip=document.getElementById('alertsStrip');
+  const items=Object.values(markets)
+    .map(m=>({m, d:d24h(m.history)}))
+    .filter(x=>x.d!=null&&Math.abs(x.d)>=0.02)
+    .sort((a,b)=>Math.abs(b.d)-Math.abs(a.d))
+    .slice(0,15);
 
-// ── Chart helpers ──────────────────────────────────────────────────
-const sparkOpts = {
-  responsive:true, maintainAspectRatio:false, animation:false,
-  plugins:{ legend:{display:false}, tooltip:{enabled:false} },
-  scales:{ x:{display:false}, y:{display:false, min:0, max:100} }
-};
-
-function detailOpts(c) {
-  return {
-    responsive:true, maintainAspectRatio:false, animation:{duration:250},
-    interaction:{mode:'index', intersect:false},
-    plugins:{
-      legend:{display:false},
-      tooltip:{
-        backgroundColor:'#1a1e2a', borderColor:'#2e3448', borderWidth:1,
-        titleColor:'#94a3b8', bodyColor:'#e2e8f0',
-        callbacks:{
-          title: ctx => formatTime(ctx[0].label),
-          label: ctx => ' '+ctx.parsed.y.toFixed(2)+'%'
-        }
-      }
-    },
-    scales:{
-      x:{
-        display:true, border:{display:false},
-        ticks:{ color:'#64748b', maxTicksLimit:7, maxRotation:0,
-          callback(v){ return new Date(this.getLabelForValue(v)).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
-        },
-        grid:{color:'rgba(255,255,255,.04)'}
-      },
-      y:{
-        display:true, min:0, max:100, border:{display:false},
-        ticks:{ color:'#64748b', callback:v=>v+'%', maxTicksLimit:5 },
-        grid:{color:'rgba(255,255,255,.04)'}
-      }
+  let html='<span class="strip-label">24h Moves</span>';
+  if(!items.length){
+    html+='<span style="color:var(--text3);font-size:11px">No significant moves yet</span>';
+  } else {
+    for(const {m,d} of items){
+      const cls=d>0?'up':'dn', arr=d>0?'▲':'▼';
+      html+=`<span class="strip-pill ${cls}" onclick="selectMarket('${m.id}')">
+        ${arr} <span class="sv">${(d*100).toFixed(1)}pp</span> ${m.label.replace('before 2027','').replace('by end of 2026','').replace('in 2026','').trim()} → ${pct(m.current)}
+      </span>`;
     }
-  };
-}
-
-function sparkData(history, c) {
-  const pts = (history||[]).slice(-96);
-  return {
-    labels: pts.map(h=>h.t),
-    datasets:[{ data:pts.map(h=>pctN(h.v)), borderColor:c.main, backgroundColor:c.dim,
-      borderWidth:1.5, pointRadius:0, fill:true, tension:0.35 }]
-  };
-}
-
-function detailData(history, c) {
-  return {
-    labels: (history||[]).map(h=>h.t),
-    datasets:[{ label:'Probability', data:(history||[]).map(h=>pctN(h.v)),
-      borderColor:c.main, backgroundColor:c.dim, borderWidth:2,
-      pointRadius:0, pointHoverRadius:4, fill:true, tension:0.35 }]
-  };
-}
-
-// ── Compute range coverage label ────────────────────────────────────
-function rangeCoverageNote(history, rangeKey) {
-  if (!history || !history.length) return '';
-  const pts = filterHistory(history, rangeKey);
-  if (!pts.length) return 'No data for this period yet — data accumulates over time.';
-  const days = Math.round((new Date(pts[pts.length-1].t) - new Date(pts[0].t)) / (24*3600*1000));
-  if (days < 1) return `${pts.length} snapshot${pts.length>1?'s':''} · less than 1 day of data`;
-  return `${pts.length} snapshots · ${days} day${days>1?'s':''} of data`;
-}
-
-// ── Detail panel HTML ───────────────────────────────────────────────
-function detailPanelHTML(m, cat) {
-  const d24 = delta24h(m.history);
-  const d7  = delta7d(m.history);
-  const first = m.history && m.history.length ? m.history[0].v : null;
-  const fromFirst = (first != null && m.current != null) ? m.current-first : null;
-  const col = cat.color;
-  const rangeKey = activeRanges[m.id] || '1M';
-
-  function statVal(v) {
-    if (v == null) return '<span style="color:var(--text3)">—</span>';
-    const sign = v>0?'+':'';
-    const color = v>0?'var(--up)':v<0?'var(--down)':'var(--text2)';
-    return `<span style="color:${color}">${sign}${(v*100).toFixed(1)}pp</span>`;
   }
-
-  const rangeBtns = RANGES.map(r => {
-    const isActive = r.key === rangeKey;
-    return `<button class="range-btn${isActive?' active '+col:''}" onclick="setRange(event,'${m.id}','${r.key}')">${r.label}</button>`;
-  }).join('');
-
-  const note = rangeCoverageNote(m.history, rangeKey);
-
-  return `
-    <div class="detail-header">
-      <span class="detail-title">${m.label}</span>
-      <a class="detail-link" href="${m.polymarket_url}" target="_blank" rel="noopener">🔗 View on Polymarket</a>
-    </div>
-    <div class="detail-stats">
-      <div class="stat-box">
-        <div class="stat-label">Current</div>
-        <div class="stat-value" style="color:var(--${col})">${pct(m.current)}</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">24h Change</div>
-        <div class="stat-value">${statVal(d24)}</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">7d Change</div>
-        <div class="stat-value">${statVal(d7)}</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Since Start</div>
-        <div class="stat-value">${statVal(fromFirst)}</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">Snapshots</div>
-        <div class="stat-value" style="color:var(--text2)">${(m.history||[]).length}</div>
-      </div>
-    </div>
-    <div class="chart-toolbar">
-      <span class="chart-label">Historical Probability</span>
-      <div class="range-btns">${rangeBtns}</div>
-    </div>
-    <div class="detail-chart-wrap">
-      <canvas id="dchart-${m.id}"></canvas>
-    </div>
-    <div class="range-note" id="rnote-${m.id}">${note}</div>`;
+  strip.innerHTML=html;
 }
 
-// ── Range switch ────────────────────────────────────────────────────
-function setRange(e, marketId, rangeKey) {
-  e.stopPropagation();
-  activeRanges[marketId] = rangeKey;
+// ── Sparkline chart ────────────────────────────────────────
+function buildSpark(id, history, color, minV, maxV){
+  const canvas=document.getElementById('spark-'+id);
+  if(!canvas) return;
 
-  const m   = DATA.markets[marketId];
-  const cat = DATA.categories[m.category] || { color:'blue' };
-  const c   = COLORS[cat.color] || COLORS.blue;
-  const col = cat.color;
+  const cutoff=Date.now()-30*24*3600*1000;
+  let pts=(history||[]).filter(h=>new Date(h.t).getTime()>=cutoff);
+  if(pts.length<5) pts=(history||[]).slice(-200);
 
-  // Update button states
-  const panel = document.getElementById(`detail-${marketId}`);
-  panel.querySelectorAll('.range-btn').forEach(btn => {
-    const k = btn.textContent.trim();
-    btn.className = 'range-btn' + (k === rangeKey ? ' active '+col : '');
+  const pad=Math.max((maxV-minV)*0.3, 2);
+  const yMin=Math.max(0, minV-pad), yMax=Math.min(100, maxV+pad);
+
+  if(sparkCharts[id]) sparkCharts[id].destroy();
+  sparkCharts[id]=new Chart(canvas.getContext('2d'),{
+    type:'line',
+    data:{
+      labels:pts.map(h=>h.t),
+      datasets:[{
+        data:pts.map(h=>pctN(h.v)),
+        borderColor:color.main,
+        backgroundColor:color.dim,
+        borderWidth:1.5, pointRadius:0, fill:true, tension:0.3
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:{display:false},y:{display:false,min:yMin,max:yMax}}
+    }
   });
-
-  // Update note
-  const noteEl = document.getElementById(`rnote-${marketId}`);
-  if (noteEl) noteEl.textContent = rangeCoverageNote(m.history, rangeKey);
-
-  // Rebuild chart with filtered data
-  const filtered = filterHistory(m.history, rangeKey);
-
-  if (detailCharts[marketId]) {
-    const chart = detailCharts[marketId];
-    chart.data = detailData(filtered, c);
-    chart.update('active');
-  }
 }
 
-// ── Render ─────────────────────────────────────────────────────────
-function render() {
-  const { last_updated, categories, markets } = DATA;
-
-  document.getElementById('lastUpdate').innerHTML =
-    `<span class="dot"></span><span>Updated ${relTime(last_updated)}</span>`;
-  document.getElementById('footerTs').textContent = `Last fetch: ${formatTime(last_updated)}`;
-
-  const byCategory = {};
-  for (const m of Object.values(markets)) {
-    if (!byCategory[m.category]) byCategory[m.category] = [];
+// ── Left panel list ────────────────────────────────────────
+function renderList(){
+  const {categories, markets}=DATA;
+  const byCategory={};
+  for(const m of Object.values(markets)){
+    if(!byCategory[m.category]) byCategory[m.category]=[];
     byCategory[m.category].push(m);
   }
 
-  const alerts = buildAlerts(markets);
-  let html = '';
+  let html='';
+  for(const catId of CAT_ORDER){
+    if(!byCategory[catId]) continue;
+    const cat=categories[catId]||{label:catId,icon:'·',color:'blue'};
+    html+=`<div class="cat-header"><span class="cat-dot ${cat.color}"></span>${cat.icon} ${cat.label}</div>`;
 
-  // Alert bar
-  html += `<div class="alerts-section">
-    <div class="alerts-header"><span class="alert-title-dot"></span>Notable 24h Movements</div>
-    <div class="alerts-grid">`;
-  if (!alerts.length) {
-    html += `<div class="no-alerts">No significant movements in the past 24 hours.</div>`;
-  } else {
-    for (const { m, d } of alerts) {
-      const dir = d > 0 ? 'rising' : 'falling';
-      html += `<a class="alert-pill ${dir}" href="#card-${m.id}" onclick="expandCard(event,'${m.id}')">
-        <span class="a-arrow">${d>0?'↑':'↓'}</span>
-        <span>${m.label}</span>
-        <span class="a-delta">${d>0?'+':''}${(d*100).toFixed(1)}pp</span>
-        <span class="a-prob">→ ${pct(m.current)}</span>
-      </a>`;
+    for(const m of byCategory[catId]){
+      const stats=sparkStats(m.history);
+      const dA=d24h(m.history), d7=d7d(m.history);
+      const selClass=selectedId===m.id?' selected':'';
+      const accentColor=COLORS[cat.color]?.main||'#60a5fa';
+
+      html+=`<div class="mrow${selClass}" id="row-${m.id}"
+        style="${selectedId===m.id?`--accent-color:${accentColor};border-left:2px solid ${accentColor};padding-left:10px`:''}"
+        onclick="selectMarket('${m.id}')">
+        <div class="m-label">${m.label}</div>
+        <div class="m-prob ${cat.color}">${pct(m.current)}</div>
+        <div class="m-delta ${deltaClass(dA)}">${deltaStr(dA)}</div>
+        <div class="m-delta ${deltaClass(d7)}">${deltaStr(d7)}</div>
+        <div class="m-spark"><canvas id="spark-${m.id}"></canvas></div>
+      </div>`;
     }
   }
-  html += `</div></div>`;
 
-  // Category sections
-  html += `<div class="sections">`;
-  const ORDER = ['iran_geopolitical','fed_rates','economy_macro','markets_assets'];
+  document.getElementById('listBody').innerHTML=html;
 
-  for (const catId of ORDER) {
-    if (!byCategory[catId]) continue;
-    const cat = categories[catId] || { label:catId, icon:'📌', color:'blue' };
-    const mList = byCategory[catId];
+  // draw sparklines after DOM update
+  requestAnimationFrame(()=>{
+    for(const m of Object.values(markets)){
+      const cat=categories[m.category]||{color:'blue'};
+      const c=COLORS[cat.color]||COLORS.blue;
+      const stats=sparkStats(m.history);
+      buildSpark(m.id, m.history, c, stats.minV, stats.maxV);
+    }
+  });
+}
 
-    html += `<div class="section">
-      <div class="section-header">
-        <div class="section-icon ${cat.color}">${cat.icon}</div>
-        <span class="section-title">${cat.label}</span>
-        <span class="section-count">${mList.length}</span>
+// ── Right panel chart ──────────────────────────────────────
+function renderRight(marketId){
+  const m=DATA.markets[marketId];
+  if(!m){ document.getElementById('rightPanel').innerHTML='<div class="empty-state"><span>Market not found</span></div>'; return; }
+  const cat=DATA.categories[m.category]||{color:'blue'};
+  const c=COLORS[cat.color]||COLORS.blue;
+  const col=cat.color;
+
+  const dA=d24h(m.history), d7=d7d(m.history);
+  const first=m.history&&m.history.length?m.history[0].v:null;
+  const fromFirst=(first!=null&&m.current!=null)?m.current-first:null;
+
+  function sv(v,colored=true){
+    if(v==null) return '<span style="color:var(--text3)">—</span>';
+    const s=v>0?'+':'';
+    const cls=colored?(v>0?'up':v<0?'dn':'neu'):'neu';
+    return `<span class="sbox-val ${cls}">${s}${(v*100).toFixed(1)}pp</span>`;
+  }
+
+  // range buttons
+  const rangeBtns=RANGES.map(r=>`
+    <button class="rbtn${r.key===selectedRange?' active '+col:''}"
+      onclick="switchRange('${marketId}','${r.key}')">${r.label}</button>`).join('');
+
+  const pts=filterHistory(m.history, selectedRange);
+  const note=pts.length
+    ? `${pts.length} snapshots · ${Math.round((new Date(pts[pts.length-1].t)-new Date(pts[0].t))/(24*3600*1000))} days`
+    : 'No data for this range yet';
+
+  // volume stats
+  const vol24=m.vol_24h!=null?fmtVol(m.vol_24h):'—';
+  const volTotal=m.vol_total!=null?fmtVol(m.vol_total):'—';
+  const liq=m.liquidity!=null?fmtVol(m.liquidity):'—';
+
+  document.getElementById('rightPanel').innerHTML=`
+    <div class="chart-area" id="chartArea">
+      <div class="chart-head">
+        <div class="chart-title">${m.label}</div>
+        <a class="chart-polylink" href="${m.polymarket_url}" target="_blank" rel="noopener">🔗 Polymarket</a>
       </div>
-      <div class="cards-grid">`;
 
-    for (const m of mList) {
-      const dl = deltaLabel(delta24h(m.history));
-      html += `
-        <div class="card" id="card-${m.id}" onclick="toggleDetail('${m.id}')">
-          <div class="card-accent ${cat.color}"></div>
-          <div class="card-label">${m.label}</div>
-          <div class="card-bottom">
-            <div class="card-prob ${cat.color}">${pct(m.current)}</div>
-            <span class="card-delta ${dl.cls}">${dl.text}</span>
-          </div>
-          <div class="card-sparkline"><canvas id="spark-${m.id}"></canvas></div>
+      <div class="chart-stats">
+        <div class="big-prob ${col}">${pct(m.current)}</div>
+        <div class="stats-boxes">
+          <div class="sbox"><div class="sbox-label">24h</div>${sv(dA)}</div>
+          <div class="sbox"><div class="sbox-label">7d</div>${sv(d7)}</div>
+          <div class="sbox"><div class="sbox-label">Since start</div>${sv(fromFirst)}</div>
+          <div class="sbox"><div class="sbox-label">Vol 24h</div><div class="sbox-val vol">${vol24}</div></div>
+          <div class="sbox"><div class="sbox-label">Liquidity</div><div class="sbox-val vol">${liq}</div></div>
+          <div class="sbox"><div class="sbox-label">Vol total</div><div class="sbox-val vol">${volTotal}</div></div>
         </div>
-        <div class="detail-panel" id="detail-${m.id}">${detailPanelHTML(m, cat)}</div>`;
-    }
+      </div>
 
-    html += `</div></div>`;
-  }
+      <div class="range-row">
+        <span class="range-label">Historical Probability</span>
+        <div class="range-btns">${rangeBtns}</div>
+      </div>
 
-  html += `</div>`;
-  document.getElementById('app').innerHTML = html;
+      <div class="chart-wrap">
+        <canvas id="mainChart"></canvas>
+      </div>
+      <div class="range-note">${note}</div>
+    </div>`;
 
-  // Draw sparklines
-  requestAnimationFrame(() => {
-    for (const [id, m] of Object.entries(markets)) {
-      const cat = categories[m.category] || { color:'blue' };
-      const c   = COLORS[cat.color] || COLORS.blue;
-      const canvas = document.getElementById(`spark-${id}`);
-      if (!canvas) continue;
-      if (sparkCharts[id]) sparkCharts[id].destroy();
-      sparkCharts[id] = new Chart(canvas.getContext('2d'), {
-        type:'line', data: sparkData(m.history, c), options: sparkOpts
-      });
-    }
+  // draw main chart
+  requestAnimationFrame(()=>{
+    const canvas=document.getElementById('mainChart');
+    if(!canvas) return;
+    if(mainChart){ mainChart.destroy(); mainChart=null; }
+    mainChart=new Chart(canvas.getContext('2d'),{
+      type:'line',
+      data:{
+        labels:pts.map(h=>h.t),
+        datasets:[{
+          label:'Probability',
+          data:pts.map(h=>pctN(h.v)),
+          borderColor:c.main, backgroundColor:c.dim,
+          borderWidth:2, pointRadius:0, pointHoverRadius:5,
+          fill:true, tension:0.3
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        animation:{duration:300},
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:false},
+          tooltip:{
+            backgroundColor:'#1a1e2a', borderColor:'#2e3448', borderWidth:1,
+            titleColor:'#8899b0', bodyColor:'#e2e8f0',
+            callbacks:{
+              title:ctx=>formatTime(ctx[0].label),
+              label:ctx=>' '+ctx.parsed.y.toFixed(2)+'%'
+            }
+          }
+        },
+        scales:{
+          x:{
+            display:true, border:{display:false},
+            ticks:{color:'#50637a', maxTicksLimit:8, maxRotation:0,
+              callback(v){ return new Date(this.getLabelForValue(v)).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+            },
+            grid:{color:'rgba(255,255,255,.03)'}
+          },
+          y:{
+            display:true, min:0, max:100, border:{display:false},
+            ticks:{color:'#50637a', callback:v=>v+'%', maxTicksLimit:6},
+            grid:{color:'rgba(255,255,255,.03)'}
+          }
+        }
+      }
+    });
   });
 }
 
-// ── Detail toggle ───────────────────────────────────────────────────
-function toggleDetail(id) {
-  const panel = document.getElementById(`detail-${id}`);
-  const card  = document.getElementById(`card-${id}`);
-  if (!panel || !card) return;
-
-  if (activeDetail === id) {
-    panel.classList.remove('open'); card.classList.remove('active');
-    if (detailCharts[id]) { detailCharts[id].destroy(); delete detailCharts[id]; }
-    activeDetail = null;
-    return;
-  }
-
-  // Close previous
-  if (activeDetail) {
-    const pp = document.getElementById(`detail-${activeDetail}`);
-    const pc = document.getElementById(`card-${activeDetail}`);
-    if (pp) pp.classList.remove('open');
-    if (pc) pc.classList.remove('active');
-    if (detailCharts[activeDetail]) { detailCharts[activeDetail].destroy(); delete detailCharts[activeDetail]; }
-  }
-
-  panel.classList.add('open'); card.classList.add('active');
-  activeDetail = id;
-
-  const m   = DATA.markets[id];
-  const cat = DATA.categories[m.category] || { color:'blue' };
-  const c   = COLORS[cat.color] || COLORS.blue;
-  const rangeKey = activeRanges[id] || '1M';
-  const filtered = filterHistory(m.history, rangeKey);
-
-  requestAnimationFrame(() => {
-    const canvas = document.getElementById(`dchart-${id}`);
-    if (canvas) {
-      if (detailCharts[id]) detailCharts[id].destroy();
-      detailCharts[id] = new Chart(canvas.getContext('2d'), {
-        type:'line', data: detailData(filtered, c), options: detailOpts(c)
-      });
-    }
-    setTimeout(() => panel.scrollIntoView({ behavior:'smooth', block:'nearest' }), 60);
-  });
+// ── Select / switch range ──────────────────────────────────
+function selectMarket(id){
+  selectedId=id;
+  renderList();   // re-render list to update highlight
+  renderRight(id);
 }
 
-function expandCard(e, id) {
-  e.preventDefault();
-  toggleDetail(id);
-  setTimeout(() => {
-    const el = document.getElementById(`card-${id}`);
-    if (el) el.scrollIntoView({ behavior:'smooth', block:'center' });
-  }, 100);
+function switchRange(marketId, rangeKey){
+  selectedRange=rangeKey;
+  renderRight(marketId);
+}
+
+// ── Master render ──────────────────────────────────────────
+function renderAll(){
+  document.getElementById('lastUpdate').innerHTML=
+    `<span class="dot"></span><span>${relTime(DATA.last_updated)}</span>`;
+
+  renderAlerts(DATA.markets);
+  renderList();
+
+  if(selectedId&&DATA.markets[selectedId]){
+    renderRight(selectedId);
+  }
 }
 
 loadData();
