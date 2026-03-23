@@ -289,6 +289,11 @@ function buildSpark(canvasId,history,colorMain,colorDim){
 function renderList(){
   const{categories,markets}=DATA;
 
+  // Collect all group_ids that exist in data
+  const existingGroupIds=new Set(
+    Object.values(markets).filter(m=>m.group_id).map(m=>m.group_id)
+  );
+
   // Group markets
   const byCategory={};
   const groups={};   // group_id -> [market]
@@ -303,7 +308,13 @@ function renderList(){
         byCategory[cat].push({_groupId:m.group_id,_label:m.label,_vol:m.vol_total||0,_cat:cat});
       }
     }else{
-      byCategory[cat].push(m);
+      // Skip single markets whose label matches an existing group (stale data.json entries)
+      const isDuplicate=Object.values(groups).some(grp=>grp[0]?.label===m.label) ||
+        [...existingGroupIds].some(gid=>{
+          const grpMembers=Object.values(markets).filter(x=>x.group_id===gid);
+          return grpMembers[0]?.label===m.label;
+        });
+      if(!isDuplicate) byCategory[cat].push(m);
     }
   }
 
@@ -546,35 +557,60 @@ function drawMultiChart(members, col){
   if(!canvas)return;
   if(mainChart){mainChart.destroy();mainChart=null;}
 
-  const datasets=members.map((m,i)=>{
-    const color=PALETTE[i%PALETTE.length];
+  // Build unified sorted label set from all members' filtered history
+  const allTs=new Set();
+  const memberPts=members.map(m=>{
     const pts=filterH(m.history,selectedRange);
+    pts.forEach(h=>allTs.add(h.t));
+    return{m,pts};
+  });
+  const labels=[...allTs].sort();
+
+  const datasets=memberPts.map(({m,pts},i)=>{
+    const color=PALETTE[i%PALETTE.length];
     const isDim=dimmedLines.has(m.id);
+    // Map each label to the nearest value (or null)
+    const tsMap=Object.fromEntries(pts.map(h=>[h.t, pctN(h.v)]));
+    const data=labels.map(t=>tsMap[t]??null);
     return{
       label:m.sub_label||m.label,
-      data:pts.map(h=>({x:h.t,y:pctN(h.v)})),
+      data,
       borderColor:color,
       backgroundColor:'transparent',
       borderWidth:isDim?1:2,
       pointRadius:0,pointHoverRadius:5,
       fill:false,tension:0.3,
-      opacity:isDim?0.2:1,
       borderDash:isDim?[4,4]:[],
     };
   });
 
   mainChart=new Chart(canvas.getContext('2d'),{
     type:'line',
-    data:{datasets},
+    data:{labels,datasets},
     options:{
-      ...chartOpts(col),
-      parsing:false,
+      responsive:true,maintainAspectRatio:false,animation:{duration:300},
+      spanGaps:true,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#1a1e2a',borderColor:'#2e3448',borderWidth:1,
+          titleColor:'#8899b0',bodyColor:'#e2e8f0',
+          callbacks:{
+            title:ctx=>formatTime(ctx[0].label),
+            label:ctx=>{
+              const v=ctx.parsed.y;
+              if(v==null)return null;
+              return` ${v.toFixed(1)}% — ${ctx.dataset.label}`;
+            }
+          }
+        }
+      },
       scales:{
         x:{
-          type:'time',
-          time:{unit:'day',tooltipFormat:'MMM d'},
           display:true,border:{display:false},
-          ticks:{color:'#50637a',maxTicksLimit:8,maxRotation:0},
+          ticks:{color:'#50637a',maxTicksLimit:8,maxRotation:0,
+            callback(v){return new Date(this.getLabelForValue(v)).toLocaleDateString('en-US',{month:'short',day:'numeric'})}},
           grid:{color:'rgba(255,255,255,.03)'}
         },
         y:{display:true,min:0,max:100,border:{display:false},
