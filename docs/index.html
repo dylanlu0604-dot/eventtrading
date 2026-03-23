@@ -92,11 +92,42 @@ body { background: var(--bg); color: var(--text); font-family: 'Inter', system-u
 .detail-title { font-size: 14.5px; font-weight: 700; }
 .detail-link { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--text2); text-decoration: none; transition: all .15s; }
 .detail-link:hover { color: #fff; border-color: var(--border2); }
-.detail-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 8px; margin-bottom: 14px; }
+.detail-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 8px; margin-bottom: 16px; }
 .stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
 .stat-label { font-size: 10.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; }
 .stat-value { font-size: 17px; font-weight: 700; margin-top: 2px; }
-.detail-chart-wrap { position: relative; height: 200px; }
+
+/* Range selector */
+.chart-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+.chart-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .6px; }
+.range-btns { display: flex; gap: 4px; }
+.range-btn {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text3);
+  cursor: pointer;
+  transition: all .15s;
+  letter-spacing: .3px;
+}
+.range-btn:hover { color: var(--text); border-color: var(--border2); }
+.range-btn.active {
+  background: var(--border2);
+  border-color: var(--border2);
+  color: var(--text);
+}
+.range-btn.active.red   { border-color: var(--red);   color: var(--red); }
+.range-btn.active.blue  { border-color: var(--blue);  color: var(--blue); }
+.range-btn.active.amber { border-color: var(--amber); color: var(--amber); }
+.range-btn.active.green { border-color: var(--green); color: var(--green); }
+
+/* No-data note */
+.range-note { font-size: 11px; color: var(--text3); margin-top: 6px; text-align: center; font-style: italic; }
+
+.detail-chart-wrap { position: relative; height: 210px; }
 
 /* Footer */
 .footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--text3); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
@@ -115,6 +146,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Inter', system-u
 @media (max-width: 600px) {
   .cards-grid { grid-template-columns: 1fr; }
   .card-prob { font-size: 23px; }
+  .range-btns { flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -147,18 +179,29 @@ const DATA_URL = './data.json';
 const ALERT_THRESHOLD = 0.025;
 const REFRESH_MS = 5 * 60 * 1000;
 
+// Time range definitions (ms back from now; null = all)
+const RANGES = [
+  { key: '1M',  ms: 30  * 24 * 3600 * 1000, label: '1M'  },
+  { key: '3M',  ms: 90  * 24 * 3600 * 1000, label: '3M'  },
+  { key: '6M',  ms: 180 * 24 * 3600 * 1000, label: '6M'  },
+  { key: '12M', ms: 365 * 24 * 3600 * 1000, label: '12M' },
+  { key: 'ALL', ms: null,                    label: 'ALL' },
+];
+
 const COLORS = {
-  red:   { main:'#f87171', dim:'rgba(248,113,113,.12)', glow:'rgba(248,113,113,.35)' },
-  blue:  { main:'#60a5fa', dim:'rgba(96,165,250,.12)',  glow:'rgba(96,165,250,.35)' },
-  amber: { main:'#fbbf24', dim:'rgba(251,191,36,.12)',  glow:'rgba(251,191,36,.35)' },
-  green: { main:'#34d399', dim:'rgba(52,211,153,.12)',  glow:'rgba(52,211,153,.35)' },
+  red:   { main:'#f87171', dim:'rgba(248,113,113,.12)' },
+  blue:  { main:'#60a5fa', dim:'rgba(96,165,250,.12)'  },
+  amber: { main:'#fbbf24', dim:'rgba(251,191,36,.12)'  },
+  green: { main:'#34d399', dim:'rgba(52,211,153,.12)'  },
 };
 
 let DATA = null, activeDetail = null;
 const sparkCharts = {}, detailCharts = {};
+// Track selected range per market: { [id]: rangeKey }
+const activeRanges = {};
 
-// ── Utils ──
-const pct = v => v == null ? '—' : (v*100).toFixed(1)+'%';
+// ── Utils ──────────────────────────────────────────────────────────
+const pct  = v => v == null ? '—' : (v*100).toFixed(1)+'%';
 const pctN = v => v == null ? null : +(v*100).toFixed(3);
 
 function getDeltaSince(history, msAgo) {
@@ -174,6 +217,14 @@ function getDeltaSince(history, msAgo) {
 }
 const delta24h = h => getDeltaSince(h, 24*3600*1000);
 const delta7d  = h => getDeltaSince(h, 7*24*3600*1000);
+
+function filterHistory(history, rangeKey) {
+  if (!history) return [];
+  const r = RANGES.find(x => x.key === rangeKey);
+  if (!r || r.ms === null) return history;
+  const cutoff = Date.now() - r.ms;
+  return history.filter(h => new Date(h.t).getTime() >= cutoff);
+}
 
 function formatTime(iso) {
   return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
@@ -192,7 +243,7 @@ function deltaLabel(d) {
   return { cls: d>0?'up':'down', text: sign+(d*100).toFixed(1)+'pp 24h' };
 }
 
-// ── Load ──
+// ── Load ───────────────────────────────────────────────────────────
 async function loadData() {
   try {
     const r = await fetch(DATA_URL+'?_='+Date.now());
@@ -204,7 +255,7 @@ async function loadData() {
   }
 }
 
-// ── Alerts ──
+// ── Alerts ─────────────────────────────────────────────────────────
 function buildAlerts(markets) {
   return Object.values(markets)
     .map(m => ({ m, d: delta24h(m.history) }))
@@ -213,7 +264,7 @@ function buildAlerts(markets) {
     .slice(0, 12);
 }
 
-// ── Chart helpers ──
+// ── Chart helpers ──────────────────────────────────────────────────
 const sparkOpts = {
   responsive:true, maintainAspectRatio:false, animation:false,
   plugins:{ legend:{display:false}, tooltip:{enabled:false} },
@@ -222,8 +273,8 @@ const sparkOpts = {
 
 function detailOpts(c) {
   return {
-    responsive:true, maintainAspectRatio:false, animation:{duration:300},
-    interaction:{mode:'index',intersect:false},
+    responsive:true, maintainAspectRatio:false, animation:{duration:250},
+    interaction:{mode:'index', intersect:false},
     plugins:{
       legend:{display:false},
       tooltip:{
@@ -270,20 +321,38 @@ function detailData(history, c) {
   };
 }
 
-// ── Detail HTML ──
+// ── Compute range coverage label ────────────────────────────────────
+function rangeCoverageNote(history, rangeKey) {
+  if (!history || !history.length) return '';
+  const pts = filterHistory(history, rangeKey);
+  if (!pts.length) return 'No data for this period yet — data accumulates over time.';
+  const days = Math.round((new Date(pts[pts.length-1].t) - new Date(pts[0].t)) / (24*3600*1000));
+  if (days < 1) return `${pts.length} snapshot${pts.length>1?'s':''} · less than 1 day of data`;
+  return `${pts.length} snapshots · ${days} day${days>1?'s':''} of data`;
+}
+
+// ── Detail panel HTML ───────────────────────────────────────────────
 function detailPanelHTML(m, cat) {
   const d24 = delta24h(m.history);
   const d7  = delta7d(m.history);
   const first = m.history && m.history.length ? m.history[0].v : null;
   const fromFirst = (first != null && m.current != null) ? m.current-first : null;
   const col = cat.color;
+  const rangeKey = activeRanges[m.id] || '1M';
 
-  function statVal(v, colored=false) {
+  function statVal(v) {
     if (v == null) return '<span style="color:var(--text3)">—</span>';
     const sign = v>0?'+':'';
-    const color = colored ? (v>0?'var(--up)':v<0?'var(--down)':'var(--text2)') : 'var(--text2)';
+    const color = v>0?'var(--up)':v<0?'var(--down)':'var(--text2)';
     return `<span style="color:${color}">${sign}${(v*100).toFixed(1)}pp</span>`;
   }
+
+  const rangeBtns = RANGES.map(r => {
+    const isActive = r.key === rangeKey;
+    return `<button class="range-btn${isActive?' active '+col:''}" onclick="setRange(event,'${m.id}','${r.key}')">${r.label}</button>`;
+  }).join('');
+
+  const note = rangeCoverageNote(m.history, rangeKey);
 
   return `
     <div class="detail-header">
@@ -297,27 +366,63 @@ function detailPanelHTML(m, cat) {
       </div>
       <div class="stat-box">
         <div class="stat-label">24h Change</div>
-        <div class="stat-value">${statVal(d24, true)}</div>
+        <div class="stat-value">${statVal(d24)}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">7d Change</div>
-        <div class="stat-value">${statVal(d7, true)}</div>
+        <div class="stat-value">${statVal(d7)}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Since Start</div>
-        <div class="stat-value">${statVal(fromFirst, true)}</div>
+        <div class="stat-value">${statVal(fromFirst)}</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Snapshots</div>
         <div class="stat-value" style="color:var(--text2)">${(m.history||[]).length}</div>
       </div>
     </div>
+    <div class="chart-toolbar">
+      <span class="chart-label">Historical Probability</span>
+      <div class="range-btns">${rangeBtns}</div>
+    </div>
     <div class="detail-chart-wrap">
       <canvas id="dchart-${m.id}"></canvas>
-    </div>`;
+    </div>
+    <div class="range-note" id="rnote-${m.id}">${note}</div>`;
 }
 
-// ── Render ──
+// ── Range switch ────────────────────────────────────────────────────
+function setRange(e, marketId, rangeKey) {
+  e.stopPropagation();
+  activeRanges[marketId] = rangeKey;
+
+  const m   = DATA.markets[marketId];
+  const cat = DATA.categories[m.category] || { color:'blue' };
+  const c   = COLORS[cat.color] || COLORS.blue;
+  const col = cat.color;
+
+  // Update button states
+  const panel = document.getElementById(`detail-${marketId}`);
+  panel.querySelectorAll('.range-btn').forEach(btn => {
+    const k = btn.textContent.trim();
+    btn.className = 'range-btn' + (k === rangeKey ? ' active '+col : '');
+  });
+
+  // Update note
+  const noteEl = document.getElementById(`rnote-${marketId}`);
+  if (noteEl) noteEl.textContent = rangeCoverageNote(m.history, rangeKey);
+
+  // Rebuild chart with filtered data
+  const filtered = filterHistory(m.history, rangeKey);
+
+  if (detailCharts[marketId]) {
+    const chart = detailCharts[marketId];
+    chart.data = detailData(filtered, c);
+    chart.update('active');
+  }
+}
+
+// ── Render ─────────────────────────────────────────────────────────
 function render() {
   const { last_updated, categories, markets } = DATA;
 
@@ -325,7 +430,6 @@ function render() {
     `<span class="dot"></span><span>Updated ${relTime(last_updated)}</span>`;
   document.getElementById('footerTs').textContent = `Last fetch: ${formatTime(last_updated)}`;
 
-  // Group markets by category
   const byCategory = {};
   for (const m of Object.values(markets)) {
     if (!byCategory[m.category]) byCategory[m.category] = [];
@@ -333,58 +437,52 @@ function render() {
   }
 
   const alerts = buildAlerts(markets);
-
   let html = '';
 
-  // ── Alert bar ──
+  // Alert bar
   html += `<div class="alerts-section">
     <div class="alerts-header"><span class="alert-title-dot"></span>Notable 24h Movements</div>
     <div class="alerts-grid">`;
-
   if (!alerts.length) {
     html += `<div class="no-alerts">No significant movements in the past 24 hours.</div>`;
   } else {
     for (const { m, d } of alerts) {
       const dir = d > 0 ? 'rising' : 'falling';
-      const arrow = d > 0 ? '↑' : '↓';
-      const sign = d > 0 ? '+' : '';
       html += `<a class="alert-pill ${dir}" href="#card-${m.id}" onclick="expandCard(event,'${m.id}')">
-        <span class="a-arrow">${arrow}</span>
+        <span class="a-arrow">${d>0?'↑':'↓'}</span>
         <span>${m.label}</span>
-        <span class="a-delta">${sign}${(d*100).toFixed(1)}pp</span>
+        <span class="a-delta">${d>0?'+':''}${(d*100).toFixed(1)}pp</span>
         <span class="a-prob">→ ${pct(m.current)}</span>
       </a>`;
     }
   }
   html += `</div></div>`;
 
-  // ── Category sections ──
+  // Category sections
   html += `<div class="sections">`;
   const ORDER = ['iran_geopolitical','fed_rates','economy_macro','markets_assets'];
 
   for (const catId of ORDER) {
     if (!byCategory[catId]) continue;
-    const cat = categories[catId] || { label: catId, icon: '📌', color: 'blue' };
-    const color = cat.color;
+    const cat = categories[catId] || { label:catId, icon:'📌', color:'blue' };
     const mList = byCategory[catId];
 
     html += `<div class="section">
       <div class="section-header">
-        <div class="section-icon ${color}">${cat.icon}</div>
+        <div class="section-icon ${cat.color}">${cat.icon}</div>
         <span class="section-title">${cat.label}</span>
         <span class="section-count">${mList.length}</span>
       </div>
       <div class="cards-grid">`;
 
     for (const m of mList) {
-      const d = delta24h(m.history);
-      const dl = deltaLabel(d);
+      const dl = deltaLabel(delta24h(m.history));
       html += `
         <div class="card" id="card-${m.id}" onclick="toggleDetail('${m.id}')">
-          <div class="card-accent ${color}"></div>
+          <div class="card-accent ${cat.color}"></div>
           <div class="card-label">${m.label}</div>
           <div class="card-bottom">
-            <div class="card-prob ${color}">${pct(m.current)}</div>
+            <div class="card-prob ${cat.color}">${pct(m.current)}</div>
             <span class="card-delta ${dl.cls}">${dl.text}</span>
           </div>
           <div class="card-sparkline"><canvas id="spark-${m.id}"></canvas></div>
@@ -401,19 +499,19 @@ function render() {
   // Draw sparklines
   requestAnimationFrame(() => {
     for (const [id, m] of Object.entries(markets)) {
-      const cat = categories[m.category] || { color: 'blue' };
-      const c = COLORS[cat.color] || COLORS.blue;
+      const cat = categories[m.category] || { color:'blue' };
+      const c   = COLORS[cat.color] || COLORS.blue;
       const canvas = document.getElementById(`spark-${id}`);
       if (!canvas) continue;
       if (sparkCharts[id]) sparkCharts[id].destroy();
       sparkCharts[id] = new Chart(canvas.getContext('2d'), {
-        type: 'line', data: sparkData(m.history, c), options: sparkOpts
+        type:'line', data: sparkData(m.history, c), options: sparkOpts
       });
     }
   });
 }
 
-// ── Detail toggle ──
+// ── Detail toggle ───────────────────────────────────────────────────
 function toggleDetail(id) {
   const panel = document.getElementById(`detail-${id}`);
   const card  = document.getElementById(`card-${id}`);
@@ -438,15 +536,18 @@ function toggleDetail(id) {
   panel.classList.add('open'); card.classList.add('active');
   activeDetail = id;
 
-  const m = DATA.markets[id];
-  const cat = DATA.categories[m.category] || { color: 'blue' };
-  const c = COLORS[cat.color] || COLORS.blue;
+  const m   = DATA.markets[id];
+  const cat = DATA.categories[m.category] || { color:'blue' };
+  const c   = COLORS[cat.color] || COLORS.blue;
+  const rangeKey = activeRanges[id] || '1M';
+  const filtered = filterHistory(m.history, rangeKey);
 
   requestAnimationFrame(() => {
     const canvas = document.getElementById(`dchart-${id}`);
     if (canvas) {
+      if (detailCharts[id]) detailCharts[id].destroy();
       detailCharts[id] = new Chart(canvas.getContext('2d'), {
-        type:'line', data: detailData(m.history, c), options: detailOpts(c)
+        type:'line', data: detailData(filtered, c), options: detailOpts(c)
       });
     }
     setTimeout(() => panel.scrollIntoView({ behavior:'smooth', block:'nearest' }), 60);
@@ -458,7 +559,7 @@ function expandCard(e, id) {
   toggleDetail(id);
   setTimeout(() => {
     const el = document.getElementById(`card-${id}`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (el) el.scrollIntoView({ behavior:'smooth', block:'center' });
   }, 100);
 }
 
