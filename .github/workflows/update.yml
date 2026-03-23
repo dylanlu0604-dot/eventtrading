@@ -53,6 +53,16 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "data: auto-update [skip ci]"
-          file_pattern: "docs/data.json markets_config.json"
+          file_pattern: "docs/data.json"
           commit_user_name: github-actions[bot]
           commit_user_email: github-actions[bot]@users.noreply.github.com
+
+      - name: Commit markets_config if exists
+        run: |
+          if [ -f markets_config.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add markets_config.json
+            git diff --cached --quiet || git commit -m "data: update markets_config [skip ci]"
+            git push
+          fi
