@@ -333,16 +333,37 @@ def keyword_fallback_single(e: dict) -> dict | None:
 
 DATE_RE = re.compile(
     r'\b(january|february|march|april|may|june|july|august|september|october|november|december'
-    r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec'
-    r'|\d{1,2}/\d{1,2})\b',
+    r'|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b[\s\w,]*?\d{1,2}(?:,\s*\d{4})?'
+    r'|\bQ[1-4]\s+\d{4}\b'
+    r'|\bend of (march|june|september|december|2025|2026|2027)\b',
+    re.IGNORECASE
+)
+
+# Keywords that indicate a price-level series, NOT a date series
+PRICE_LEVEL_RE = re.compile(
+    r'\$[\d,]+|\d+%|\d+\s*(bps|basis|percent)|'
+    r'\b(high|low|above|below|settle|hit|reach)\b.*\$',
     re.IGNORECASE
 )
 
 
 def is_date_series(markets: list[dict]) -> bool:
-    """Return True if ≥2 sub-markets look like date endpoints."""
-    count = sum(1 for m in markets if DATE_RE.search(m.get('question', '')))
-    return count >= 2
+    """
+    True only if this is a genuine deadline-series event:
+    - ≥3 sub-markets that each have a DATE in the question
+    - Sub-markets are NOT price-level variants (e.g. $5,000 / $6,000 / $7,000)
+    - Sub-market questions share the same stem but differ only by date
+    """
+    date_markets = [m for m in markets if DATE_RE.search(m.get('question', ''))]
+    if len(date_markets) < 3:
+        return False
+
+    # Reject if sub-markets look like price-level variants instead of date variants
+    price_count = sum(1 for m in date_markets if PRICE_LEVEL_RE.search(m.get('question', '')))
+    if price_count > len(date_markets) // 2:
+        return False  # majority are price levels, not date deadlines
+
+    return True
 
 
 def build_result(e: dict, cls: dict) -> list[dict]:
@@ -357,14 +378,18 @@ def build_result(e: dict, cls: dict) -> list[dict]:
     markets = e.get('markets', [])
 
     if is_date_series(markets):
-        return _make_multi(e, cat, outcome)
-    else:
-        market = next((m for m in markets if str(m.get('id')) == mid), None)
-        if not market and markets:
-            market = markets[0]
-        if not market:
-            return []
-        return [_make_single(e, cat, market, outcome)]
+        multi = _make_multi(e, cat, outcome)
+        if multi:
+            return multi
+        # Fall through to single if _make_multi couldn't produce clean labels
+
+    # Single-market result
+    market = next((m for m in markets if str(m.get('id')) == mid), None)
+    if not market and markets:
+        market = markets[0]
+    if not market:
+        return []
+    return [_make_single(e, cat, market, outcome)]
 
 
 def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
@@ -385,22 +410,18 @@ def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
         if outcome not in outcomes:
             continue
 
+        # Only include sub-markets with a clean date label
+        sub_label = _extract_date_label(q)
+        if not sub_label:
+            continue   # skip sub-markets without a recognisable date
+
         token_id = None
         for o, t in zip(outcomes, tokens):
             if o == outcome:
                 token_id = t
                 break
 
-        # Extract a short date label from the question
-        sub_label = _extract_date_label(q) or q[:40]
-        sub_id    = (group_id + '_' + _make_id(sub_label))[:60]
-
-        # sub-market volume from outcomePrices position
-        try:
-            idx      = list(outcomes).index(outcome)
-            sub_vol  = round(float(prices[idx]) * float(e.get('volume') or 0))
-        except Exception:
-            sub_vol  = 0
+        sub_id = (group_id + '_' + _make_id(sub_label))[:60]
 
         results.append({
             "id":            sub_id,
@@ -418,6 +439,10 @@ def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
             "volume_24h":    round(float(e.get('volume24hr') or 0)),
             "liquidity":     round(float(e.get('liquidity') or 0)),
         })
+
+    # If we couldn't extract clean labels for enough sub-markets, fall back to single
+    if len(results) < 3:
+        return []   # caller will use keyword_fallback_single → _make_single
 
     return results
 
@@ -454,19 +479,31 @@ def _make_single(e: dict, cat: str, market: dict, outcome: str) -> dict:
 
 
 def _extract_date_label(question: str) -> str | None:
-    """Pull a short date string from a question like 'ceasefire by March 31?'."""
+    """
+    Pull a clean 'Month DD' or 'Month DD, YYYY' label from a question.
+    Returns None if no clean date found — caller must handle this.
+    Never falls back to question text fragments.
+    """
+    # Match "March 31" / "April 15, 2026" — day must be 1-31, not a year
     m = re.search(
-        r'\b(january|february|march|april|may|june|july|august|september|october|november|december|'
-        r'jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b[\s\w,]*?\d{1,2}(?:,\s*\d{4})?',
+        r'\b(january|february|march|april|may|june|july|august|september|october|november|december)'
+        r'\s+(3[01]|[12]\d|0?[1-9])(?!\d)(?:,?\s*(\d{4}))?',
         question, re.IGNORECASE
     )
     if m:
-        return m.group(0).strip()[:20]
-    # fallback: last "by <something>" phrase
-    m2 = re.search(r'by\s+(.{3,20}?)[\?$]', question, re.IGNORECASE)
+        month = m.group(1).capitalize()[:3]   # "Mar"
+        day   = m.group(2).lstrip('0') or '0' # "31", "5"
+        year  = m.group(3)
+        if year and year not in ('2026', '2025'):
+            return f"{month} {day} {year}"
+        return f"{month} {day}"
+
+    # Match "Q1 2026", "end of 2026"
+    m2 = re.search(r'\b(Q[1-4]\s*\d{4}|end of \d{4})\b', question, re.IGNORECASE)
     if m2:
-        return m2.group(1).strip()[:20]
-    return None
+        return m2.group(1)
+
+    return None  # No clean date found
 
 
 def _make_id(title: str) -> str:
@@ -484,7 +521,10 @@ def keyword_fallback_single(e: dict) -> list[dict]:
     if not markets:
         return []
     if is_date_series(markets):
-        return _make_multi(e, cat, 'Yes')
+        multi = _make_multi(e, cat, 'Yes')
+        if multi:
+            return multi
+    # Fall back to single best market
     for m in markets:
         outcomes = m.get('outcomes', '[]')
         if isinstance(outcomes, str): outcomes = json.loads(outcomes)
