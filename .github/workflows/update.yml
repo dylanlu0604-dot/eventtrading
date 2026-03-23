@@ -2,8 +2,18 @@ name: Update Polymarket Data
 
 on:
   schedule:
+    # Every 30 minutes — fetch latest prices
     - cron: '*/30 * * * *'
+    # Every Monday 00:00 UTC — re-discover new markets
+    - cron: '0 0 * * 1'
   workflow_dispatch:
+    inputs:
+      run_discovery:
+        description: 'Also run auto-discovery?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -11,7 +21,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -22,13 +32,27 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run fetcher
+      # ── Auto-discovery (weekly or manual) ──────────────────────────────────
+      - name: Run auto-discovery
+        if: |
+          github.event.schedule == '0 0 * * 1' ||
+          github.event.inputs.run_discovery == 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          echo "Running auto_discover.py..."
+          python auto_discover.py
+          echo "Discovery complete."
+
+      # ── Price fetch (every 30 min) ─────────────────────────────────────────
+      - name: Fetch latest prices
         run: python fetch_data.py
 
-      - name: Commit and push data
+      # ── Commit ─────────────────────────────────────────────────────────────
+      - name: Commit and push
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "data: auto-update Polymarket probabilities [skip ci]"
-          file_pattern: docs/data.json
+          commit_message: "data: auto-update [skip ci]"
+          file_pattern: "docs/data.json markets_config.json"
           commit_user_name: github-actions[bot]
           commit_user_email: github-actions[bot]@users.noreply.github.com
