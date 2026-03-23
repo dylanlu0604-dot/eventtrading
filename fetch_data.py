@@ -183,6 +183,14 @@ def main():
 
     data["last_updated"] = now_ts
 
+    # Remove markets no longer in config (cleanup stale entries)
+    active_ids = {cfg.get("id") for cfg in markets_cfg if cfg.get("id")}
+    stale = [mid for mid in list(data["markets"]) if mid not in active_ids]
+    for mid in stale:
+        del data["markets"][mid]
+    if stale:
+        print(f"  Removed {len(stale)} stale markets: {stale[:5]}{'...' if len(stale)>5 else ''}")
+
     os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
     with open(DATA_PATH, "w") as f:
         json.dump(data, f, separators=(",", ":"))
