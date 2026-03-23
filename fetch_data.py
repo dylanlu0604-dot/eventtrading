@@ -164,6 +164,8 @@ def main():
             "id":            mid,
             "current":       price,
             "label":         cfg.get("label", m.get("label", "")),
+            "sub_label":     cfg.get("sub_label"),
+            "group_id":      cfg.get("group_id"),
             "category":      cfg.get("category", m.get("category", "")),
             "question":      question,
             "polymarket_url":cfg.get("polymarket_url", m.get("polymarket_url", "")),
