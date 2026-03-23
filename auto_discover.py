@@ -404,7 +404,11 @@ def deduplicate(results: list[dict]) -> list[dict]:
     # Cap per category
     by_cat = defaultdict(list)
     for r in deduped:
-        by_cat[r['category']].append(r)
+        cat = r.get('category')
+        # Skip if category is null, "null", or not one of our 4 valid categories
+        if not cat or cat == 'null' or cat not in KEYWORD_MAP:
+            continue
+        by_cat[cat].append(r)
 
     final = []
     for cat, items in by_cat.items():
