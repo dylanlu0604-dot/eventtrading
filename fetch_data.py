@@ -341,6 +341,11 @@ def main():
 
         price = find_market_price(event, cfg["q_contains"], cfg["outcome"])
 
+        # Extract volume / liquidity from event level
+        vol_24h = round(float(event.get("volume24hr") or 0))
+        vol_total = round(float(event.get("volume") or 0))
+        liquidity = round(float(event.get("liquidity") or 0))
+
         if price is None:
             print(f"  WARNING: Could not find market '{cfg['q_contains']}' in event {event_id}")
             errors.append(market_id)
@@ -364,6 +369,9 @@ def main():
                 "label": cfg["label"],
                 "polymarket_url": f"https://polymarket.com/event/{cfg['slug']}",
                 "current": price,
+                "vol_24h": vol_24h,
+                "vol_total": vol_total,
+                "liquidity": liquidity,
                 "history": [],
             }
 
@@ -372,6 +380,9 @@ def main():
         m["label"] = cfg["label"]
         m["category"] = cfg["category"]
         m["polymarket_url"] = f"https://polymarket.com/event/{cfg['slug']}"
+        m["vol_24h"] = vol_24h
+        m["vol_total"] = vol_total
+        m["liquidity"] = liquidity
 
         # Append to history
         m["history"].append({"t": now_ts, "v": price})
