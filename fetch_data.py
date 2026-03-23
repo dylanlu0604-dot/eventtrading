@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Polymarket Data Fetcher
-Fetches probability data from Polymarket and updates docs/data.json
+fetch_data.py
+─────────────
+Reads market definitions from markets_config.json (produced by auto_discover.py),
+fetches current prices from the Polymarket Gamma API, and appends to docs/data.json.
+
+Run every 30 minutes via GitHub Actions.
 """
 
 import json
@@ -9,285 +13,41 @@ import subprocess
 import os
 from datetime import datetime, timezone
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MARKET CONFIGURATION
-# Each entry: event_id, question substring to match, outcome to track, metadata
-# ─────────────────────────────────────────────────────────────────────────────
-TRACKED = [
-    # ── Iran / Geopolitical ──────────────────────────────────────────────────
-    {
-        "id": "us_invades_iran",
-        "category": "iran_geopolitical",
-        "label": "US invades Iran before 2027",
-        "event_id": 73130,
-        "q_contains": "U.S. invade Iran",
-        "outcome": "Yes",
-        "slug": "will-the-us-invade-iran-before-2027",
-    },
-    {
-        "id": "iranian_regime_falls",
-        "category": "iran_geopolitical",
-        "label": "Iranian regime falls before 2027",
-        "event_id": 72347,
-        "q_contains": "Iranian regime fall",
-        "outcome": "Yes",
-        "slug": "will-the-iranian-regime-fall-before-2027",
-    },
-    {
-        "id": "iran_nuke",
-        "category": "iran_geopolitical",
-        "label": "Iran acquires nuclear weapon before 2027",
-        "event_id": 79222,
-        "q_contains": "Iran Nuke",
-        "outcome": "Yes",
-        "slug": "iran-nuke-before-2027",
-    },
-    {
-        "id": "iran_nuclear_test",
-        "category": "iran_geopolitical",
-        "label": "Iran conducts nuclear test before 2027",
-        "event_id": 73227,
-        "q_contains": "Iran nuclear test",
-        "outcome": "Yes",
-        "slug": "iran-nuclear-test-before-2027",
-    },
-    {
-        "id": "iran_npt_withdrawal",
-        "category": "iran_geopolitical",
-        "label": "Iran withdraws from NPT before 2027",
-        "event_id": 73330,
-        "q_contains": "Iran withdraw from the NPT",
-        "outcome": "Yes",
-        "slug": "will-iran-withdraw-from-the-npt-before-2027",
-    },
-    # ── Fed / Interest Rates ─────────────────────────────────────────────────
-    {
-        "id": "fed_april_hold",
-        "category": "fed_rates",
-        "label": "Fed holds rates in April 2026",
-        "event_id": 75478,
-        "q_contains": "no change in Fed interest rates after the April",
-        "outcome": "Yes",
-        "slug": "fed-decision-in-april",
-    },
-    {
-        "id": "fed_april_hike",
-        "category": "fed_rates",
-        "label": "Fed hikes rates in April 2026",
-        "event_id": 75478,
-        "q_contains": "increase interest rates by 25+ bps after the April",
-        "outcome": "Yes",
-        "slug": "fed-decision-in-april",
-    },
-    {
-        "id": "fed_june_hold",
-        "category": "fed_rates",
-        "label": "Fed holds rates in June 2026",
-        "event_id": 101772,
-        "q_contains": "no change in Fed interest rates after the June",
-        "outcome": "Yes",
-        "slug": "fed-decision-in-june",
-    },
-    {
-        "id": "fed_june_cut25",
-        "category": "fed_rates",
-        "label": "Fed cuts 25bps in June 2026",
-        "event_id": 101772,
-        "q_contains": "decrease interest rates by 25 bps after the June",
-        "outcome": "Yes",
-        "slug": "fed-decision-in-june",
-    },
-    {
-        "id": "fed_2026_zero_cuts",
-        "category": "fed_rates",
-        "label": "No Fed rate cuts in 2026",
-        "event_id": 51456,
-        "q_contains": "no Fed rate cuts happen in 2026",
-        "outcome": "Yes",
-        "slug": "how-many-fed-rate-cuts-in-2026",
-    },
-    {
-        "id": "fed_rate_hike_2026",
-        "category": "fed_rates",
-        "label": "Fed rate hike in 2026",
-        "event_id": 101936,
-        "q_contains": "Fed rate hike in 2026",
-        "outcome": "Yes",
-        "slug": "fed-rate-hike-in-2026",
-    },
-    {
-        "id": "fed_emergency_cut",
-        "category": "fed_rates",
-        "label": "Fed emergency rate cut before 2027",
-        "event_id": 79124,
-        "q_contains": "Fed emergency rate cut",
-        "outcome": "Yes",
-        "slug": "fed-emergency-rate-cut-before-2027",
-    },
-    # ── Economy / Macro ──────────────────────────────────────────────────────
-    {
-        "id": "us_recession_2026",
-        "category": "economy_macro",
-        "label": "US recession by end of 2026",
-        "event_id": 48802,
-        "q_contains": "US recession by end of 2026",
-        "outcome": "Yes",
-        "slug": "us-recession-by-end-of-2026",
-    },
-    {
-        "id": "inflation_above_4pct",
-        "category": "economy_macro",
-        "label": "US inflation exceeds 4% in 2026",
-        "event_id": 80773,
-        "q_contains": "reach more than 4%",
-        "outcome": "Yes",
-        "slug": "how-high-will-inflation-get-in-2026",
-    },
-    {
-        "id": "inflation_above_5pct",
-        "category": "economy_macro",
-        "label": "US inflation exceeds 5% in 2026",
-        "event_id": 80773,
-        "q_contains": "reach more than 5%",
-        "outcome": "Yes",
-        "slug": "how-high-will-inflation-get-in-2026",
-    },
-    {
-        "id": "negative_gdp_2026",
-        "category": "economy_macro",
-        "label": "US negative GDP growth in 2026",
-        "event_id": 80660,
-        "q_contains": "Negative GDP growth in 2026",
-        "outcome": "Yes",
-        "slug": "negative-gdp-growth-in-2026",
-    },
-    {
-        "id": "debt_downgrade",
-        "category": "economy_macro",
-        "label": "Another US credit downgrade before 2027",
-        "event_id": 73338,
-        "q_contains": "debt downgrade before 2027",
-        "outcome": "Yes",
-        "slug": "another-us-debt-downgrade-before-2027",
-    },
-    {
-        "id": "nyse_circuit_breaker",
-        "category": "economy_macro",
-        "label": "NYSE market-wide circuit breaker triggered before 2027",
-        "event_id": 75598,
-        "q_contains": "NYSE marketwide circuit breaker",
-        "outcome": "Yes",
-        "slug": "nyse-marketwide-circuit-breaker-before-2027",
-    },
-    # ── Markets / Assets ─────────────────────────────────────────────────────
-    {
-        "id": "gold_best_2026",
-        "category": "markets_assets",
-        "label": "Gold outperforms BTC & S&P 500 in 2026",
-        "event_id": 106981,
-        "q_contains": "Gold have the best performance in 2026",
-        "outcome": "Yes",
-        "slug": "bitcoin-vs-gold-vs-s-p-500-in-2026",
-    },
-    {
-        "id": "sp500_q1_negative",
-        "category": "markets_assets",
-        "label": "S&P 500 Q1 2026 change < 3%",
-        "event_id": 162001,
-        "q_contains": "percentage change in the S&P 500 in Q1 2026 be less than",
-        "outcome": "Yes",
-        "slug": "q1-s-p-500-performance",
-    },
-    {
-        "id": "sp500_close_below_6000",
-        "category": "markets_assets",
-        "label": "S&P 500 closes below $6,000 in Dec 2026",
-        "event_id": 148015,
-        "q_contains": "S&P 500 (SPX) close at <$6,000 in December",
-        "outcome": "Yes",
-        "slug": "what-will-s-p-500-spx-close-at-end-of-2026",
-    },
-    {
-        "id": "crude_above_90_june",
-        "category": "markets_assets",
-        "label": "WTI Crude Oil > $90 at end of June 2026",
-        "event_id": 125878,
-        "q_contains": "over $90 on the final trading day of J",
-        "outcome": "Yes",
-        "slug": "crude-oil-cl-above-end-of-june",
-    },
-    {
-        "id": "gold_hit_6000_june",
-        "category": "markets_assets",
-        "label": "Gold futures hit $6,000 by end of June 2026",
-        "event_id": 125865,
-        "q_contains": "hit (HIGH) $6,000 by end of June",
-        "outcome": "Yes",
-        "slug": "what-will-gold-gc-hit-by-end-of-june",
-    },
-]
+GAMMA_API   = "https://gamma-api.polymarket.com"
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "markets_config.json")
+DATA_PATH   = os.path.join(os.path.dirname(__file__), "docs", "data.json")
+MAX_HISTORY = 1440   # ~30 days at 30-min intervals
 
-CATEGORIES = {
-    "iran_geopolitical": {
-        "label": "Iran & Geopolitical Risk",
-        "icon": "🚨",
-        "color": "red",
-    },
-    "fed_rates": {
-        "label": "Fed & Interest Rates",
-        "icon": "🏦",
-        "color": "blue",
-    },
-    "economy_macro": {
-        "label": "Economy & Inflation",
-        "icon": "📊",
-        "color": "amber",
-    },
-    "markets_assets": {
-        "label": "Markets & Assets",
-        "icon": "📈",
-        "color": "green",
-    },
-}
 
-MAX_HISTORY = 1440  # keep last 30 days of 30-min snapshots
+def curl(url, timeout=15):
+    result = subprocess.run(
+        ["curl", "-s", "--max-time", str(timeout), "-H", "User-Agent: Mozilla/5.0", url],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
 
 
 def fetch_event(event_id):
-    """Fetch event data from Polymarket Gamma API."""
-    url = f"https://gamma-api.polymarket.com/events?id={event_id}"
-    result = subprocess.run(
-        ["curl", "-s", "--max-time", "15", "-H", "User-Agent: Mozilla/5.0", url],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        return None
-    try:
-        data = json.loads(result.stdout)
-        return data[0] if data else None
-    except (json.JSONDecodeError, IndexError):
-        return None
+    data = curl(f"{GAMMA_API}/events?id={event_id}", timeout=12)
+    if isinstance(data, list) and data:
+        return data[0]
+    return None
 
 
-def find_market_price(event, q_contains, outcome):
-    """Find price for a specific outcome in an event's markets."""
-    markets = event.get("markets", [])
-    q_lower = q_contains.lower()
-
-    for market in markets:
-        question = (market.get("question") or "").lower()
-        if q_lower.lower() not in question:
+def find_price_by_market_id(event, market_id, outcome):
+    for market in event.get("markets", []):
+        if str(market.get("id")) != str(market_id):
             continue
-
-        outcomes_raw = market.get("outcomes", "[]")
-        prices_raw = market.get("outcomePrices", "[]")
-
-        if isinstance(outcomes_raw, str):
-            outcomes_raw = json.loads(outcomes_raw)
-        if isinstance(prices_raw, str):
-            prices_raw = json.loads(prices_raw)
-
-        for o, p in zip(outcomes_raw, prices_raw):
+        outcomes = market.get("outcomes", "[]")
+        prices   = market.get("outcomePrices", "[]")
+        if isinstance(outcomes, str): outcomes = json.loads(outcomes)
+        if isinstance(prices,   str): prices   = json.loads(prices)
+        for o, p in zip(outcomes, prices):
             if o.lower() == outcome.lower():
                 try:
                     return round(float(p), 4)
@@ -296,114 +56,136 @@ def find_market_price(event, q_contains, outcome):
     return None
 
 
-def load_existing_data(path):
-    """Load existing data.json or create empty structure."""
-    if os.path.exists(path):
+def find_price_by_question(event, question_sub, outcome):
+    q_lower = question_sub.lower()
+    for market in event.get("markets", []):
+        if q_lower not in (market.get("question") or "").lower():
+            continue
+        outcomes = market.get("outcomes", "[]")
+        prices   = market.get("outcomePrices", "[]")
+        if isinstance(outcomes, str): outcomes = json.loads(outcomes)
+        if isinstance(prices,   str): prices   = json.loads(prices)
+        for o, p in zip(outcomes, prices):
+            if o.lower() == outcome.lower():
+                try:
+                    return round(float(p), 4)
+                except (ValueError, TypeError):
+                    return None
+    return None
+
+
+def load_config():
+    """Load markets_config.json. Falls back gracefully if missing."""
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+
+    print("WARNING: markets_config.json not found. Run auto_discover.py first.")
+    # Return minimal structure so the script doesn't crash
+    return {"categories": {}, "markets": []}
+
+
+def load_data():
+    if os.path.exists(DATA_PATH):
         try:
-            with open(path, "r") as f:
+            with open(DATA_PATH) as f:
                 return json.load(f)
         except Exception:
             pass
-    return {"last_updated": None, "categories": CATEGORIES, "markets": {}, "version": 1}
+    return {"last_updated": None, "categories": {}, "markets": {}}
 
 
 def main():
-    data_path = os.path.join(os.path.dirname(__file__), "docs", "data.json")
-    data = load_existing_data(data_path)
-    now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    config      = load_config()
+    data        = load_data()
+    now_ts      = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    markets_cfg = config.get("markets", [])
 
-    print(f"[{now_ts}] Fetching {len(TRACKED)} markets...")
+    print(f"[{now_ts}] Fetching {len(markets_cfg)} markets...")
 
-    # Cache fetched events to avoid duplicate API calls
-    event_cache = {}
+    # Keep category metadata up to date
+    data["categories"] = config.get("categories", data.get("categories", {}))
+
+    event_cache   = {}
     success_count = 0
-    errors = []
+    errors        = []
 
-    for cfg in TRACKED:
-        event_id = cfg["event_id"]
+    for cfg in markets_cfg:
+        mid      = cfg.get("id")
+        event_id = cfg.get("event_id")
+        if not mid or not event_id:
+            continue
 
         # Fetch event (cached)
         if event_id not in event_cache:
             print(f"  Fetching event {event_id}...", end=" ", flush=True)
             event = fetch_event(event_id)
             event_cache[event_id] = event
-            if event:
-                print("OK")
-            else:
-                print("FAILED")
+            print("OK" if event else "FAILED")
         event = event_cache[event_id]
 
-        market_id = cfg["id"]
-
         if event is None:
-            errors.append(market_id)
+            errors.append(mid)
             continue
 
-        price = find_market_price(event, cfg["q_contains"], cfg["outcome"])
+        # Find price: market_id preferred, fall back to question substring
+        outcome   = cfg.get("outcome", "Yes")
+        market_id = cfg.get("market_id")
+        question  = cfg.get("question", "")
 
-        # Extract volume / liquidity from event level
-        vol_24h = round(float(event.get("volume24hr") or 0))
-        vol_total = round(float(event.get("volume") or 0))
-        liquidity = round(float(event.get("liquidity") or 0))
+        price = None
+        if market_id:
+            price = find_price_by_market_id(event, str(market_id), outcome)
+        if price is None and question:
+            price = find_price_by_question(event, question, outcome)
 
         if price is None:
-            print(f"  WARNING: Could not find market '{cfg['q_contains']}' in event {event_id}")
-            errors.append(market_id)
-            # Keep existing data without update
-            if market_id not in data["markets"]:
-                data["markets"][market_id] = {
-                    "id": market_id,
-                    "category": cfg["category"],
-                    "label": cfg["label"],
-                    "polymarket_url": f"https://polymarket.com/event/{cfg['slug']}",
-                    "current": None,
-                    "history": [],
+            print(f"  WARNING: No price for {mid}")
+            errors.append(mid)
+            if mid not in data["markets"]:
+                data["markets"][mid] = {
+                    "id": mid, "category": cfg.get("category",""),
+                    "label": cfg.get("label",""), "question": question,
+                    "polymarket_url": cfg.get("polymarket_url",""),
+                    "current": None, "vol_24h": 0, "vol_total": 0,
+                    "liquidity": 0, "history": [],
                 }
             continue
 
-        # Initialize market entry if new
-        if market_id not in data["markets"]:
-            data["markets"][market_id] = {
-                "id": market_id,
-                "category": cfg["category"],
-                "label": cfg["label"],
-                "polymarket_url": f"https://polymarket.com/event/{cfg['slug']}",
-                "current": price,
-                "vol_24h": vol_24h,
-                "vol_total": vol_total,
-                "liquidity": liquidity,
-                "history": [],
-            }
+        vol_24h   = round(float(event.get("volume24hr") or 0))
+        vol_total = round(float(event.get("volume")     or 0))
+        liquidity = round(float(event.get("liquidity")  or 0))
 
-        m = data["markets"][market_id]
-        m["current"] = price
-        m["label"] = cfg["label"]
-        m["category"] = cfg["category"]
-        m["polymarket_url"] = f"https://polymarket.com/event/{cfg['slug']}"
-        m["vol_24h"] = vol_24h
-        m["vol_total"] = vol_total
-        m["liquidity"] = liquidity
+        if mid not in data["markets"]:
+            data["markets"][mid] = {"history": []}
 
-        # Append to history
+        m = data["markets"][mid]
+        m.update({
+            "id":            mid,
+            "current":       price,
+            "label":         cfg.get("label", m.get("label", "")),
+            "category":      cfg.get("category", m.get("category", "")),
+            "question":      question,
+            "polymarket_url":cfg.get("polymarket_url", m.get("polymarket_url", "")),
+            "vol_24h":       vol_24h,
+            "vol_total":     vol_total,
+            "liquidity":     liquidity,
+        })
+
         m["history"].append({"t": now_ts, "v": price})
-
-        # Trim history
         if len(m["history"]) > MAX_HISTORY:
             m["history"] = m["history"][-MAX_HISTORY:]
 
         success_count += 1
-        print(f"  ✓ {cfg['label'][:50]}: {price*100:.1f}%")
+        print(f"  ✓ {cfg.get('label','')[:52]:52s}: {price*100:.1f}%")
 
-    # Update metadata
     data["last_updated"] = now_ts
-    data["categories"] = CATEGORIES
 
-    # Save
-    os.makedirs(os.path.dirname(data_path), exist_ok=True)
-    with open(data_path, "w") as f:
+    os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
+    with open(DATA_PATH, "w") as f:
         json.dump(data, f, separators=(",", ":"))
 
-    print(f"\n✅ Done: {success_count}/{len(TRACKED)} markets updated, {len(errors)} errors")
+    print(f"\n✅ Done: {success_count}/{len(markets_cfg)} updated, {len(errors)} errors")
     if errors:
         print(f"   Errors: {errors}")
 
