@@ -4,12 +4,12 @@ on:
   schedule:
     # Every 30 minutes — fetch latest prices
     - cron: '*/30 * * * *'
-    # Every Monday 00:00 UTC — re-discover new markets
+    # Every Monday 00:00 UTC — re-discover + backfill new markets
     - cron: '0 0 * * 1'
   workflow_dispatch:
     inputs:
       run_discovery:
-        description: 'Also run auto-discovery?'
+        description: 'Run auto-discovery + backfill?'
         required: false
         default: 'false'
         type: choice
@@ -21,7 +21,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -40,16 +40,24 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          echo "Running auto_discover.py..."
+          echo "=== auto_discover.py ==="
           python auto_discover.py
-          echo "Discovery complete."
+
+      # ── Backfill new markets (after discovery, or manually) ────────────────
+      - name: Backfill history for new markets
+        if: |
+          github.event.schedule == '0 0 * * 1' ||
+          github.event.inputs.run_discovery == 'true'
+        run: |
+          echo "=== backfill_history.py (new markets only) ==="
+          python backfill_history.py --days 365 --min-pts 100
 
       # ── Price fetch (every 30 min) ─────────────────────────────────────────
       - name: Fetch latest prices
         run: python fetch_data.py
 
-      # ── Commit ─────────────────────────────────────────────────────────────
-      - name: Commit and push
+      # ── Commit data.json ───────────────────────────────────────────────────
+      - name: Commit data.json
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "data: auto-update [skip ci]"
@@ -57,12 +65,12 @@ jobs:
           commit_user_name: github-actions[bot]
           commit_user_email: github-actions[bot]@users.noreply.github.com
 
-      - name: Commit markets_config if exists
+      # ── Commit markets_config.json if it was updated ───────────────────────
+      - name: Commit markets_config if updated
         run: |
           if [ -f markets_config.json ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add markets_config.json
-            git diff --cached --quiet || git commit -m "data: update markets_config [skip ci]"
-            git push
+            git diff --cached --quiet || git commit -m "data: update markets_config [skip ci]" && git push || true
           fi
