@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Polymarket Risk Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d0f14; --bg2: #13161e; --bg3: #1a1e2a;
+  --border: #252a38; --border2: #2e3448;
+  --text: #e2e8f0; --text2: #94a3b8; --text3: #64748b;
+  --red: #f87171; --red-dim: rgba(248,113,113,.12);
+  --blue: #60a5fa; --blue-dim: rgba(96,165,250,.12);
+  --amber: #fbbf24; --amber-dim: rgba(251,191,36,.12);
+  --green: #34d399; --green-dim: rgba(52,211,153,.12);
+  --up: #34d399; --down: #f87171;
+  --r: 10px;
+}
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 14px; line-height: 1.6; min-height: 100vh; }
+.page { max-width: 1280px; margin: 0 auto; padding: 0 20px 60px; }
+
+/* Header */
+.header { display: flex; align-items: center; justify-content: space-between; padding: 28px 0 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
+.header-left h1 { font-size: 21px; font-weight: 700; letter-spacing: -.3px; display: flex; align-items: center; gap: 10px; }
+.header-left h1 .logo { width: 32px; height: 32px; background: linear-gradient(135deg,#6366f1,#8b5cf6); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 17px; }
+.header-left p { color: var(--text2); font-size: 12.5px; margin-top: 3px; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.update-badge { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 6px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.refresh-btn { background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 6px 14px; font-size: 13px; color: var(--text); cursor: pointer; transition: all .15s; }
+.refresh-btn:hover { background: var(--border2); color: #fff; }
+
+/* Alerts */
+.alerts-section { margin: 24px 0 0; }
+.alerts-header { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--text2); margin-bottom: 12px; }
+.alerts-header .alert-title-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+.alerts-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.alert-pill { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 9px 13px; display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; text-decoration: none; color: var(--text); transition: border-color .2s; }
+.alert-pill:hover { border-color: var(--border2); }
+.alert-pill.rising { border-left: 3px solid var(--up); }
+.alert-pill.falling { border-left: 3px solid var(--down); }
+.alert-pill .a-arrow { font-size: 13px; }
+.alert-pill .a-delta { font-weight: 700; }
+.alert-pill.rising .a-delta { color: var(--up); }
+.alert-pill.falling .a-delta { color: var(--down); }
+.alert-pill .a-prob { color: var(--text3); font-size: 11.5px; }
+.no-alerts { color: var(--text3); font-size: 13px; padding: 8px 0; }
+
+/* Sections */
+.sections { margin-top: 32px; display: flex; flex-direction: column; gap: 36px; }
+.section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.section-icon { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.section-icon.red   { background: var(--red-dim); }
+.section-icon.blue  { background: var(--blue-dim); }
+.section-icon.amber { background: var(--amber-dim); }
+.section-icon.green { background: var(--green-dim); }
+.section-title { font-size: 15.5px; font-weight: 700; }
+.section-count { margin-left: auto; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px; font-size: 11.5px; color: var(--text2); }
+
+/* Cards */
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 12px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); padding: 15px; cursor: pointer; transition: border-color .2s, transform .15s, box-shadow .2s; position: relative; overflow: hidden; }
+.card:hover { border-color: var(--border2); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.card.active { border-color: var(--border2); box-shadow: 0 0 0 1px var(--border2); }
+.card-accent { position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: var(--r) var(--r) 0 0; }
+.card-accent.red   { background: var(--red); }
+.card-accent.blue  { background: var(--blue); }
+.card-accent.amber { background: var(--amber); }
+.card-accent.green { background: var(--green); }
+.card-label { font-size: 12.5px; font-weight: 500; color: var(--text); line-height: 1.4; margin-top: 5px; min-height: 34px; }
+.card-bottom { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 12px; gap: 8px; }
+.card-prob { font-size: 27px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+.card-prob.red   { color: var(--red); }
+.card-prob.blue  { color: var(--blue); }
+.card-prob.amber { color: var(--amber); }
+.card-prob.green { color: var(--green); }
+.card-delta { font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+.card-delta.up   { background: rgba(52,211,153,.15); color: var(--up); }
+.card-delta.down { background: rgba(248,113,113,.15); color: var(--down); }
+.card-delta.flat { background: var(--bg3); color: var(--text3); }
+.card-sparkline { margin-top: 10px; height: 38px; }
+.card-sparkline canvas { width: 100% !important; height: 38px !important; }
+
+/* Detail panel */
+.detail-panel { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--r); padding: 18px; margin-top: 12px; display: none; }
+.detail-panel.open { display: block; }
+.detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+.detail-title { font-size: 14.5px; font-weight: 700; }
+.detail-link { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--text2); text-decoration: none; transition: all .15s; }
+.detail-link:hover { color: #fff; border-color: var(--border2); }
+.detail-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 8px; margin-bottom: 14px; }
+.stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+.stat-label { font-size: 10.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; }
+.stat-value { font-size: 17px; font-weight: 700; margin-top: 2px; }
+.detail-chart-wrap { position: relative; height: 200px; }
+
+/* Footer */
+.footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--text3); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.footer a { color: var(--text2); text-decoration: none; }
+.footer a:hover { color: var(--text); }
+
+/* Loading */
+.loading { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text2); }
+.spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+@media (max-width: 600px) {
+  .cards-grid { grid-template-columns: 1fr; }
+  .card-prob { font-size: 23px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="header">
+  <div class="header-left">
+    <h1><span class="logo">⚡</span>Polymarket Risk Dashboard</h1>
+    <p>Real-time prediction market probabilities · Iran · Fed · Economy · S&amp;P 500 · Gold · Crude Oil</p>
+  </div>
+  <div class="header-right">
+    <div class="update-badge" id="lastUpdate"><span class="dot"></span><span>Loading…</span></div>
+    <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+  </div>
+</header>
+
+<div id="app">
+  <div class="loading"><div class="spinner"></div><span>Fetching market data…</span></div>
+</div>
+
+<footer class="footer">
+  <span>Data from <a href="https://polymarket.com" target="_blank">Polymarket</a> via Gamma API · Auto-updated every 30 min via GitHub Actions</span>
+  <span id="footerTs"></span>
+</footer>
+</div>
+
+<script>
+const DATA_URL = './data.json';
+const ALERT_THRESHOLD = 0.025;
+const REFRESH_MS = 5 * 60 * 1000;
+
+const COLORS = {
+  red:   { main:'#f87171', dim:'rgba(248,113,113,.12)', glow:'rgba(248,113,113,.35)' },
+  blue:  { main:'#60a5fa', dim:'rgba(96,165,250,.12)',  glow:'rgba(96,165,250,.35)' },
+  amber: { main:'#fbbf24', dim:'rgba(251,191,36,.12)',  glow:'rgba(251,191,36,.35)' },
+  green: { main:'#34d399', dim:'rgba(52,211,153,.12)',  glow:'rgba(52,211,153,.35)' },
+};
+
+let DATA = null, activeDetail = null;
+const sparkCharts = {}, detailCharts = {};
+
+// ── Utils ──
+const pct = v => v == null ? '—' : (v*100).toFixed(1)+'%';
+const pctN = v => v == null ? null : +(v*100).toFixed(3);
+
+function getDeltaSince(history, msAgo) {
+  if (!history || history.length < 2) return null;
+  const now = history[history.length-1].v;
+  const cutoff = Date.now() - msAgo;
+  let prev = history[0].v;
+  for (const h of history) {
+    if (new Date(h.t).getTime() <= cutoff) prev = h.v;
+    else break;
+  }
+  return now - prev;
+}
+const delta24h = h => getDeltaSince(h, 24*3600*1000);
+const delta7d  = h => getDeltaSince(h, 7*24*3600*1000);
+
+function formatTime(iso) {
+  return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'});
+}
+function relTime(iso) {
+  const s = Math.floor((Date.now()-new Date(iso))/1000);
+  if (s < 60) return s+'s ago';
+  if (s < 3600) return Math.floor(s/60)+'m ago';
+  if (s < 86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+function deltaLabel(d) {
+  if (d == null) return { cls:'flat', text:'—' };
+  if (Math.abs(d) < 0.001) return { cls:'flat', text:'±0.0pp' };
+  const sign = d>0?'+':'';
+  return { cls: d>0?'up':'down', text: sign+(d*100).toFixed(1)+'pp 24h' };
+}
+
+// ── Load ──
+async function loadData() {
+  try {
+    const r = await fetch(DATA_URL+'?_='+Date.now());
+    DATA = await r.json();
+    render();
+  } catch(e) {
+    document.getElementById('app').innerHTML =
+      '<div class="loading"><span style="color:#f87171">⚠ Failed to load data.</span></div>';
+  }
+}
+
+// ── Alerts ──
+function buildAlerts(markets) {
+  return Object.values(markets)
+    .map(m => ({ m, d: delta24h(m.history) }))
+    .filter(x => x.d != null && Math.abs(x.d) >= ALERT_THRESHOLD)
+    .sort((a,b) => Math.abs(b.d)-Math.abs(a.d))
+    .slice(0, 12);
+}
+
+// ── Chart helpers ──
+const sparkOpts = {
+  responsive:true, maintainAspectRatio:false, animation:false,
+  plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+  scales:{ x:{display:false}, y:{display:false, min:0, max:100} }
+};
+
+function detailOpts(c) {
+  return {
+    responsive:true, maintainAspectRatio:false, animation:{duration:300},
+    interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{display:false},
+      tooltip:{
+        backgroundColor:'#1a1e2a', borderColor:'#2e3448', borderWidth:1,
+        titleColor:'#94a3b8', bodyColor:'#e2e8f0',
+        callbacks:{
+          title: ctx => formatTime(ctx[0].label),
+          label: ctx => ' '+ctx.parsed.y.toFixed(2)+'%'
+        }
+      }
+    },
+    scales:{
+      x:{
+        display:true, border:{display:false},
+        ticks:{ color:'#64748b', maxTicksLimit:7, maxRotation:0,
+          callback(v){ return new Date(this.getLabelForValue(v)).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+        },
+        grid:{color:'rgba(255,255,255,.04)'}
+      },
+      y:{
+        display:true, min:0, max:100, border:{display:false},
+        ticks:{ color:'#64748b', callback:v=>v+'%', maxTicksLimit:5 },
+        grid:{color:'rgba(255,255,255,.04)'}
+      }
+    }
+  };
+}
+
+function sparkData(history, c) {
+  const pts = (history||[]).slice(-96);
+  return {
+    labels: pts.map(h=>h.t),
+    datasets:[{ data:pts.map(h=>pctN(h.v)), borderColor:c.main, backgroundColor:c.dim,
+      borderWidth:1.5, pointRadius:0, fill:true, tension:0.35 }]
+  };
+}
+
+function detailData(history, c) {
+  return {
+    labels: (history||[]).map(h=>h.t),
+    datasets:[{ label:'Probability', data:(history||[]).map(h=>pctN(h.v)),
+      borderColor:c.main, backgroundColor:c.dim, borderWidth:2,
+      pointRadius:0, pointHoverRadius:4, fill:true, tension:0.35 }]
+  };
+}
+
+// ── Detail HTML ──
+function detailPanelHTML(m, cat) {
+  const d24 = delta24h(m.history);
+  const d7  = delta7d(m.history);
+  const first = m.history && m.history.length ? m.history[0].v : null;
+  const fromFirst = (first != null && m.current != null) ? m.current-first : null;
+  const col = cat.color;
+
+  function statVal(v, colored=false) {
+    if (v == null) return '<span style="color:var(--text3)">—</span>';
+    const sign = v>0?'+':'';
+    const color = colored ? (v>0?'var(--up)':v<0?'var(--down)':'var(--text2)') : 'var(--text2)';
+    return `<span style="color:${color}">${sign}${(v*100).toFixed(1)}pp</span>`;
+  }
+
+  return `
+    <div class="detail-header">
+      <span class="detail-title">${m.label}</span>
+      <a class="detail-link" href="${m.polymarket_url}" target="_blank" rel="noopener">🔗 View on Polymarket</a>
+    </div>
+    <div class="detail-stats">
+      <div class="stat-box">
+        <div class="stat-label">Current</div>
+        <div class="stat-value" style="color:var(--${col})">${pct(m.current)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">24h Change</div>
+        <div class="stat-value">${statVal(d24, true)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">7d Change</div>
+        <div class="stat-value">${statVal(d7, true)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Since Start</div>
+        <div class="stat-value">${statVal(fromFirst, true)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Snapshots</div>
+        <div class="stat-value" style="color:var(--text2)">${(m.history||[]).length}</div>
+      </div>
+    </div>
+    <div class="detail-chart-wrap">
+      <canvas id="dchart-${m.id}"></canvas>
+    </div>`;
+}
+
+// ── Render ──
+function render() {
+  const { last_updated, categories, markets } = DATA;
+
+  document.getElementById('lastUpdate').innerHTML =
+    `<span class="dot"></span><span>Updated ${relTime(last_updated)}</span>`;
+  document.getElementById('footerTs').textContent = `Last fetch: ${formatTime(last_updated)}`;
+
+  // Group markets by category
+  const byCategory = {};
+  for (const m of Object.values(markets)) {
+    if (!byCategory[m.category]) byCategory[m.category] = [];
+    byCategory[m.category].push(m);
+  }
+
+  const alerts = buildAlerts(markets);
+
+  let html = '';
+
+  // ── Alert bar ──
+  html += `<div class="alerts-section">
+    <div class="alerts-header"><span class="alert-title-dot"></span>Notable 24h Movements</div>
+    <div class="alerts-grid">`;
+
+  if (!alerts.length) {
+    html += `<div class="no-alerts">No significant movements in the past 24 hours.</div>`;
+  } else {
+    for (const { m, d } of alerts) {
+      const dir = d > 0 ? 'rising' : 'falling';
+      const arrow = d > 0 ? '↑' : '↓';
+      const sign = d > 0 ? '+' : '';
+      html += `<a class="alert-pill ${dir}" href="#card-${m.id}" onclick="expandCard(event,'${m.id}')">
+        <span class="a-arrow">${arrow}</span>
+        <span>${m.label}</span>
+        <span class="a-delta">${sign}${(d*100).toFixed(1)}pp</span>
+        <span class="a-prob">→ ${pct(m.current)}</span>
+      </a>`;
+    }
+  }
+  html += `</div></div>`;
+
+  // ── Category sections ──
+  html += `<div class="sections">`;
+  const ORDER = ['iran_geopolitical','fed_rates','economy_macro','markets_assets'];
+
+  for (const catId of ORDER) {
+    if (!byCategory[catId]) continue;
+    const cat = categories[catId] || { label: catId, icon: '📌', color: 'blue' };
+    const color = cat.color;
+    const mList = byCategory[catId];
+
+    html += `<div class="section">
+      <div class="section-header">
+        <div class="section-icon ${color}">${cat.icon}</div>
+        <span class="section-title">${cat.label}</span>
+        <span class="section-count">${mList.length}</span>
+      </div>
+      <div class="cards-grid">`;
+
+    for (const m of mList) {
+      const d = delta24h(m.history);
+      const dl = deltaLabel(d);
+      html += `
+        <div class="card" id="card-${m.id}" onclick="toggleDetail('${m.id}')">
+          <div class="card-accent ${color}"></div>
+          <div class="card-label">${m.label}</div>
+          <div class="card-bottom">
+            <div class="card-prob ${color}">${pct(m.current)}</div>
+            <span class="card-delta ${dl.cls}">${dl.text}</span>
+          </div>
+          <div class="card-sparkline"><canvas id="spark-${m.id}"></canvas></div>
+        </div>
+        <div class="detail-panel" id="detail-${m.id}">${detailPanelHTML(m, cat)}</div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  html += `</div>`;
+  document.getElementById('app').innerHTML = html;
+
+  // Draw sparklines
+  requestAnimationFrame(() => {
+    for (const [id, m] of Object.entries(markets)) {
+      const cat = categories[m.category] || { color: 'blue' };
+      const c = COLORS[cat.color] || COLORS.blue;
+      const canvas = document.getElementById(`spark-${id}`);
+      if (!canvas) continue;
+      if (sparkCharts[id]) sparkCharts[id].destroy();
+      sparkCharts[id] = new Chart(canvas.getContext('2d'), {
+        type: 'line', data: sparkData(m.history, c), options: sparkOpts
+      });
+    }
+  });
+}
+
+// ── Detail toggle ──
+function toggleDetail(id) {
+  const panel = document.getElementById(`detail-${id}`);
+  const card  = document.getElementById(`card-${id}`);
+  if (!panel || !card) return;
+
+  if (activeDetail === id) {
+    panel.classList.remove('open'); card.classList.remove('active');
+    if (detailCharts[id]) { detailCharts[id].destroy(); delete detailCharts[id]; }
+    activeDetail = null;
+    return;
+  }
+
+  // Close previous
+  if (activeDetail) {
+    const pp = document.getElementById(`detail-${activeDetail}`);
+    const pc = document.getElementById(`card-${activeDetail}`);
+    if (pp) pp.classList.remove('open');
+    if (pc) pc.classList.remove('active');
+    if (detailCharts[activeDetail]) { detailCharts[activeDetail].destroy(); delete detailCharts[activeDetail]; }
+  }
+
+  panel.classList.add('open'); card.classList.add('active');
+  activeDetail = id;
+
+  const m = DATA.markets[id];
+  const cat = DATA.categories[m.category] || { color: 'blue' };
+  const c = COLORS[cat.color] || COLORS.blue;
+
+  requestAnimationFrame(() => {
+    const canvas = document.getElementById(`dchart-${id}`);
+    if (canvas) {
+      detailCharts[id] = new Chart(canvas.getContext('2d'), {
+        type:'line', data: detailData(m.history, c), options: detailOpts(c)
+      });
+    }
+    setTimeout(() => panel.scrollIntoView({ behavior:'smooth', block:'nearest' }), 60);
+  });
+}
+
+function expandCard(e, id) {
+  e.preventDefault();
+  toggleDetail(id);
+  setTimeout(() => {
+    const el = document.getElementById(`card-${id}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 100);
+}
+
+loadData();
+setInterval(loadData, REFRESH_MS);
+</script>
+</body>
+</html>
