@@ -13,7 +13,70 @@ import subprocess
 import os
 from datetime import datetime, timezone
 
-GAMMA_API   = "https://gamma-api.polymarket.com"
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+SUMMARY_INTERVAL_MIN = 60   # regenerate summary at most every 60 minutes
+
+
+def generate_summary(label: str, question: str, current_pct: float,
+                     d24h_pp: float, vol_24h: int, scenarios: list[dict] = None) -> str:
+    """Call OpenAI gpt-4o-mini to generate a market context summary."""
+    if not OPENAI_API_KEY:
+        return ""
+
+    if scenarios:
+        sc_lines = "\n".join(f"  {s['sub_label']}: {s['current_pct']:.1f}%" for s in scenarios)
+        prompt = (f"Market: \"{label}\"\nScenarios:\n{sc_lines}\n"
+                  f"Vol 24h: ${vol_24h:,}\nWrite market context analysis.")
+    else:
+        prompt = (f"Market: \"{label}\"\nQuestion: {question}\n"
+                  f"Current probability: {current_pct:.1f}%\n"
+                  f"24h change: {d24h_pp:+.1f}pp\nVol 24h: ${vol_24h:,}\n"
+                  f"Write market context analysis.")
+
+    payload = json.dumps({
+        "model": "gpt-4o-mini",
+        "max_tokens": 200,
+        "temperature": 0.5,
+        "messages": [
+            {"role": "system", "content": (
+                "You are a concise macro market analyst. Write a 2-3 sentence Market Context "
+                "paragraph for a prediction market, like Polymarket's own website style. "
+                "Focus on what drives the probability, key catalysts, and what the odds imply. "
+                "Be specific with numbers. Third person. No bullets or headers."
+            )},
+            {"role": "user", "content": prompt}
+        ]
+    })
+
+    result = subprocess.run(
+        ["curl", "-s", "--max-time", "20",
+         "https://api.openai.com/v1/chat/completions",
+         "-H", "Content-Type: application/json",
+         "-H", f"Authorization: Bearer {OPENAI_API_KEY}",
+         "--data", payload],
+        capture_output=True, text=True, timeout=25
+    )
+    try:
+        return json.loads(result.stdout)["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return ""
+
+
+def should_refresh_summary(existing_summary: dict, now_ts: str) -> bool:
+    """Return True if the summary should be regenerated."""
+    if not existing_summary or not existing_summary.get("text"):
+        return True
+    last = existing_summary.get("updated_at", "")
+    if not last:
+        return True
+    try:
+        from datetime import datetime, timezone
+        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        now_dt  = datetime.fromisoformat(now_ts.replace("Z", "+00:00"))
+        age_min = (now_dt - last_dt).total_seconds() / 60
+        return age_min >= SUMMARY_INTERVAL_MIN
+    except Exception:
+        return True
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "markets_config.json")
 DATA_PATH   = os.path.join(os.path.dirname(__file__), "docs", "data.json")
 MAX_HISTORY = 1440   # ~30 days at 30-min intervals
@@ -202,6 +265,64 @@ def main():
         del data["markets"][mid]
     if stale:
         print(f"  Removed {len(stale)} stale markets: {stale[:5]}{'...' if len(stale)>5 else ''}")
+
+    # Generate AI summaries (once per hour per group/single)
+    if OPENAI_API_KEY:
+        print("\nGenerating AI summaries...")
+        # Find groups and singles
+        groups = {}
+        for mid, m in data["markets"].items():
+            gid = m.get("group_id")
+            if gid:
+                groups.setdefault(gid, []).append(m)
+
+        summarized = 0
+        # Group summaries
+        for gid, members in groups.items():
+            existing = data["markets"][members[0]["id"]].get("summary", {})
+            if not should_refresh_summary(existing, now_ts):
+                continue
+            scenarios = [{"sub_label": m.get("sub_label", ""), "current_pct": (m.get("current") or 0)*100}
+                         for m in members if not m.get("resolved")]
+            if not scenarios:
+                continue
+            text = generate_summary(
+                label=members[0].get("label",""),
+                question="", current_pct=0, d24h_pp=0,
+                vol_24h=members[0].get("vol_24h",0),
+                scenarios=scenarios
+            )
+            if text:
+                summary = {"text": text, "updated_at": now_ts}
+                for m in members:
+                    data["markets"][m["id"]]["summary"] = summary
+                summarized += 1
+                print(f"  ✓ summary: {members[0].get('label','')[:50]}")
+
+        # Single market summaries
+        singles = {mid: m for mid, m in data["markets"].items() if not m.get("group_id")}
+        for mid, m in singles.items():
+            if m.get("resolved"):
+                continue
+            existing = m.get("summary", {})
+            if not should_refresh_summary(existing, now_ts):
+                continue
+            h = m.get("history", [])
+            cur = (m.get("current") or 0)
+            prev = h[-48]["v"] if len(h) >= 48 else (h[0]["v"] if h else cur)
+            d24 = (cur - prev) * 100
+            text = generate_summary(
+                label=m.get("label",""),
+                question=m.get("question", m.get("label","")),
+                current_pct=cur*100, d24h_pp=d24,
+                vol_24h=m.get("vol_24h",0)
+            )
+            if text:
+                m["summary"] = {"text": text, "updated_at": now_ts}
+                summarized += 1
+                print(f"  ✓ summary: {m.get('label','')[:50]}")
+
+        print(f"  Summaries generated: {summarized}")
 
     os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
     with open(DATA_PATH, "w") as f:
