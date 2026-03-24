@@ -28,8 +28,12 @@ from datetime import datetime, timezone
 CLOB_API       = "https://clob.polymarket.com/prices-history"
 CONFIG_PATH    = os.path.join(os.path.dirname(__file__), "markets_config.json")
 DATA_PATH      = os.path.join(os.path.dirname(__file__), "docs", "data.json")
-DOWNSAMPLE_MIN = 30      # keep one point per 30-minute bucket
+DOWNSAMPLE_MIN = 30      # keep one point per 30-min bucket (for recent data)
 MAX_HISTORY    = 17520   # ~1 year at 30-min intervals
+
+# Use daily fidelity for data older than 30 days (matches Polymarket chart style,
+# avoids thin-liquidity hourly spikes). Use hourly for recent 30 days.
+DAILY_CUTOFF_DAYS = 30   # days back from today where we switch from hourly → daily
 
 
 def parse_args():
@@ -46,25 +50,60 @@ def parse_args():
 
 
 def fetch_clob(token_id: str, start_ts: int) -> list:
-    url = f"{CLOB_API}?market={token_id}&startTs={start_ts}&fidelity=60"
+    """
+    Fetch CLOB price history using two passes:
+    1. Full range with daily fidelity (fidelity=1440) — smooth, no thin-liquidity spikes
+    2. Recent 30 days with hourly fidelity (fidelity=60) — precise recent data
+
+    The two sets are merged: recent hourly overrides daily for the overlap period.
+    This matches Polymarket's own chart display (they show daily for history).
+    """
+    now = int(time.time())
+
+    # Pass 1: Full history at daily granularity
+    url_daily = f"{CLOB_API}?market={token_id}&startTs={start_ts}&fidelity=1440"
     result = subprocess.run(
-        ["curl", "-s", "--max-time", "20", "-H", "User-Agent: Mozilla/5.0", url],
+        ["curl", "-s", "--max-time", "20", "-H", "User-Agent: Mozilla/5.0", url_daily],
         capture_output=True, text=True, timeout=25
     )
+    daily_pts = []
     try:
-        return json.loads(result.stdout).get("history", [])
+        daily_pts = json.loads(result.stdout).get("history", [])
     except Exception:
-        return []
+        pass
+
+    # Pass 2: Recent 30 days at hourly granularity
+    recent_start = now - DAILY_CUTOFF_DAYS * 86400
+    url_hourly = f"{CLOB_API}?market={token_id}&startTs={recent_start}&fidelity=60"
+    result2 = subprocess.run(
+        ["curl", "-s", "--max-time", "20", "-H", "User-Agent: Mozilla/5.0", url_hourly],
+        capture_output=True, text=True, timeout=25
+    )
+    hourly_pts = []
+    try:
+        hourly_pts = json.loads(result2.stdout).get("history", [])
+    except Exception:
+        pass
+
+    # Merge: use daily for old data, hourly for recent (hourly takes precedence)
+    cutoff_t = recent_start
+    combined = [p for p in daily_pts if p["t"] < cutoff_t] + hourly_pts
+
+    return combined
 
 
 def downsample(points: list, interval_min: int = 30) -> list:
+    """Downsample raw CLOB history to fixed intervals.
+    For daily points (fidelity=1440), keeps each daily point as-is.
+    For hourly points, downsamples to 30-min buckets.
+    """
     if not points:
         return []
     iv = interval_min * 60
     buckets = {}
     for p in points:
         bucket = (p["t"] // iv) * iv
-        buckets[bucket] = p["p"]
+        buckets[bucket] = p["p"]   # last-write-wins within bucket
     return [
         {"t": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
          "v": round(price, 4)}
@@ -99,11 +138,53 @@ def load_data() -> dict:
     return {"last_updated": None, "categories": {}, "markets": {}}
 
 
+def remove_spikes(history: list, max_jump: float = 0.25) -> list:
+    """
+    Remove isolated price spikes from history.
+    A spike is a point where:
+    - The price changes by > max_jump from the previous point AND
+    - The price reverts > max_jump within the next 1-3 points
+    These are thin-liquidity artifacts, not genuine market moves.
+    """
+    if len(history) < 4:
+        return history
+    cleaned = [history[0]]
+    i = 1
+    while i < len(history):
+        prev = cleaned[-1]['v']
+        curr = history[i]['v']
+        jump = abs(curr - prev)
+
+        # Check if this is a spike (big jump followed by reversal)
+        if jump > max_jump and i + 1 < len(history):
+            # Look ahead 1-3 points for reversal
+            spike = True
+            for look in range(1, min(4, len(history) - i)):
+                next_v = history[i + look]['v']
+                # If next point is close to prev (not curr), it's a spike
+                if abs(next_v - prev) < jump * 0.6:
+                    spike = True
+                    break
+                if abs(next_v - curr) < jump * 0.4:
+                    spike = False  # sustained move, not a spike
+                    break
+
+            if spike:
+                i += 1  # skip the spike point
+                continue
+
+        cleaned.append(history[i])
+        i += 1
+    return cleaned
+
+
 def main():
     days, force, min_pts = parse_args()
     start_ts = int(time.time()) - days * 86400
 
     print(f"Backfill: {days}d window | skip if ≥{min_pts} pts | force={force}")
+    print(f"  Old data (>{DAILY_CUTOFF_DAYS}d): daily fidelity (no spikes)")
+    print(f"  Recent data (≤{DAILY_CUTOFF_DAYS}d): hourly fidelity")
 
     cfg_markets = load_config()
     data        = load_data()
@@ -139,14 +220,17 @@ def main():
             continue
 
         downsampled = downsample(raw, DOWNSAMPLE_MIN)
-        merged      = merge(existing, downsampled)
+        cleaned     = remove_spikes(downsampled)
+        merged      = merge(existing, cleaned)
 
         if mid not in data.setdefault("markets", {}):
             data["markets"][mid] = {}
         data["markets"][mid]["history"] = merged
 
         gain = len(merged) - n_pts
-        print(f"✓ {len(raw)} raw → {len(downsampled)} pts → merged={len(merged)} (+{gain})")
+        removed = len(downsampled) - len(cleaned)
+        spike_note = f" (removed {removed} spikes)" if removed else ""
+        print(f"✓ {len(raw)} raw → {len(downsampled)} pts → {len(cleaned)} clean{spike_note} → merged={len(merged)} (+{gain})")
         updated += 1
         time.sleep(0.05)
 
