@@ -54,15 +54,23 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 .list-body::-webkit-scrollbar{width:4px}
 .list-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 
-/* Category header */
-.cat-header{display:flex;align-items:center;gap:7px;padding:8px 12px 5px;background:var(--bg);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--text3);position:sticky;top:0;z-index:2}
-.cat-dot{width:7px;height:7px;border-radius:50%}
+/* Category header — full-bleed colored band */
+.cat-header{display:flex;align-items:center;gap:8px;padding:10px 14px 9px;border-top:1px solid var(--border2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;position:sticky;top:0;z-index:2}
+.cat-header.red  {background:rgba(248,113,113,.13);color:var(--red);  border-left:3px solid var(--red)}
+.cat-header.blue {background:rgba(96,165,250,.13); color:var(--blue); border-left:3px solid var(--blue)}
+.cat-header.amber{background:rgba(251,191,36,.13); color:var(--amber);border-left:3px solid var(--amber)}
+.cat-header.green{background:rgba(52,211,153,.13); color:var(--green);border-left:3px solid var(--green)}
+.cat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .cat-dot.red{background:var(--red)}.cat-dot.blue{background:var(--blue)}.cat-dot.amber{background:var(--amber)}.cat-dot.green{background:var(--green)}
 
 /* Single market row */
-.mrow{display:grid;grid-template-columns:1fr 52px 62px 72px;align-items:center;gap:0;padding:6px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s}
+.mrow{display:grid;grid-template-columns:1fr 52px 62px 72px;align-items:center;gap:0;padding:6px 12px 6px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;border-left:2px solid transparent}
 .mrow:hover{background:var(--bg3)}
-.mrow.selected{background:var(--bg3);border-left:2px solid var(--sel-color,#60a5fa);padding-left:10px}
+.mrow.selected{background:var(--bg3);border-left:2px solid var(--sel-color,#60a5fa)}
+.mrow.red  {border-left-color:rgba(248,113,113,.35)}
+.mrow.blue {border-left-color:rgba(96,165,250,.35)}
+.mrow.amber{border-left-color:rgba(251,191,36,.35)}
+.mrow.green{border-left-color:rgba(52,211,153,.35)}
 .mrow .m-label{font-size:12px;color:var(--text);line-height:1.3;padding-right:6px}
 .mrow .m-prob{font-size:14px;font-weight:800;letter-spacing:-.5px;text-align:right}
 .mrow .m-prob.red{color:var(--red)}.m-prob.blue{color:var(--blue)}.m-prob.amber{color:var(--amber)}.m-prob.green{color:var(--green)}
@@ -74,7 +82,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 .mrow .m-spark canvas{width:100%!important;height:26px!important}
 
 /* Group header row */
-.group-header{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);cursor:pointer;background:var(--bg2);transition:background .12s;user-select:none}
+.group-header{display:flex;align-items:center;gap:8px;padding:7px 12px 7px 14px;border-bottom:1px solid var(--border);cursor:pointer;background:var(--bg2);transition:background .12s;user-select:none;border-left:2px solid transparent}
+.group-header.red  {border-left-color:rgba(248,113,113,.5)}
+.group-header.blue {border-left-color:rgba(96,165,250,.5)}
+.group-header.amber{border-left-color:rgba(251,191,36,.5)}
+.group-header.green{border-left-color:rgba(52,211,153,.5)}
 .group-header:hover{background:var(--bg3)}
 .group-header.group-selected{background:var(--bg3);border-left:2px solid var(--sel-color,#60a5fa);padding-left:10px}
 .group-chevron{font-size:10px;color:var(--text3);transition:transform .2s;flex-shrink:0}
@@ -96,6 +108,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 .srow .s-delta.up{color:var(--up);background:rgba(52,211,153,.1)}
 .srow .s-delta.dn{color:var(--down);background:rgba(248,113,113,.1)}
 .srow .s-delta.fl{color:var(--text3)}
+.resolved-badge{font-size:9.5px;background:rgba(100,116,139,.12);color:var(--text3);border:1px solid var(--border);border-radius:3px;padding:1px 5px;margin-left:3px;vertical-align:middle}
+.mrow.is-resolved,.srow.is-resolved,.group-header.is-resolved{opacity:0.5}
 .srow .s-spark{height:22px}
 .srow .s-spark canvas{width:100%!important;height:22px!important}
 
@@ -323,7 +337,7 @@ function renderList(){
     if(!byCategory[catId])continue;
     const cat=categories[catId]||{label:catId,icon:'·',color:'blue'};
     const cc=CAT_COLORS[cat.color]||'#60a5fa';
-    html+=`<div class="cat-header"><span class="cat-dot ${cat.color}"></span>${cat.icon} ${cat.label}</div>`;
+    html+=`<div class="cat-header ${cat.color}"><span class="cat-dot ${cat.color}"></span>${cat.icon} ${cat.label}</div>`;
 
     // Sort: groups by vol, singles by vol
     const items=byCategory[catId].sort((a,b)=>{
@@ -351,10 +365,11 @@ function renderList(){
             const m=members[0];
             const dA=d24h(m.history);
             const isSel=selectedId===m.id||selectedGroupId===gid;
-            html+=`<div class="mrow${isSel?' selected':''}" id="row-${m.id}"
+            const isRes=m.resolved||false;
+            html+=`<div class="mrow ${cat.color}${isSel?' selected':''}${isRes?' is-resolved':''}" id="row-${m.id}"
               style="${isSel?`--sel-color:${cc};`:''}"
               onclick="handleSelect('${m.id}')">
-              <div class="m-label">${m.label}</div>
+              <div class="m-label">${m.label}${isRes?'<span class="resolved-badge">Resolved</span>':''}</div>
               <div class="m-prob ${cat.color}">${pct(m.current)}</div>
               <div class="m-delta ${dcls(dA)}">${dstr(dA)}</div>
               <div class="m-spark"><canvas id="spark-${m.id}"></canvas></div>
@@ -364,12 +379,12 @@ function renderList(){
         }
         const isOpen=openGroups.has(gid);
         const isGrpSel=selectedGroupId===gid;
-        html+=`<div class="group-header${isGrpSel?' group-selected':''}" id="grp-${gid}"
+        html+=`<div class="group-header ${cat.color}${isGrpSel?' group-selected':''}" id="grp-${gid}"
           style="${isGrpSel?`--sel-color:${cc};`:''}"
           onclick="toggleGroup(event,'${gid}')">
           <span class="group-chevron${isOpen?' open':''}">▶</span>
           <span class="group-title">${item._label}</span>
-          <span class="group-badge">${members.length} dates</span>
+          <span class="group-badge">${members.length} scenarios</span>
           <span class="group-vol">${fmtVol(item._vol)}</span>
         </div>
         <div class="sub-rows${isOpen?' open':''}" id="subrows-${gid}">`;
@@ -377,13 +392,14 @@ function renderList(){
         members.forEach((m,i)=>{
           const dA=d24h(m.history);
           const isSel=selectedId===m.id;
+          const isRes=m.resolved||false;
           const dotColor=PALETTE[i%PALETTE.length];
-          html+=`<div class="srow${isSel?' selected':''}" id="srow-${m.id}"
+          html+=`<div class="srow${isSel?' selected':''}${isRes?' is-resolved':''}" id="srow-${m.id}"
             style="${isSel?`--sel-color:${cc};`:''}"
             onclick="handleSelect('${m.id}')">
             <div class="s-label">
               <span class="s-dot" style="background:${dotColor}"></span>
-              ${m.sub_label||m.label}
+              ${m.sub_label||m.label}${isRes?'<span class="resolved-badge">✓</span>':''}
             </div>
             <div class="s-prob ${cat.color}">${pct(m.current)}</div>
             <div class="s-delta ${dcls(dA)}">${dstr(dA)}</div>
@@ -397,10 +413,11 @@ function renderList(){
         const m=item;
         const dA=d24h(m.history);
         const isSel=selectedId===m.id;
-        html+=`<div class="mrow${isSel?' selected':''}" id="row-${m.id}"
+        const isRes=m.resolved||false;
+        html+=`<div class="mrow ${cat.color}${isSel?' selected':''}${isRes?' is-resolved':''}" id="row-${m.id}"
           style="${isSel?`--sel-color:${cc};`:''}"
           onclick="handleSelect('${m.id}')">
-          <div class="m-label">${m.label}</div>
+          <div class="m-label">${m.label}${isRes?'<span class="resolved-badge">Resolved</span>':''}</div>
           <div class="m-prob ${cat.color}">${pct(m.current)}</div>
           <div class="m-delta ${dcls(dA)}">${dstr(dA)}</div>
           <div class="m-spark"><canvas id="spark-${m.id}"></canvas></div>
@@ -684,8 +701,8 @@ function toggleDim(mid,gid){
   });
 }
 
-// ── Robust Y-axis: use 1st–99th percentile to ignore outlier spikes ──
-// Preserves genuine large market moves; only clips single-point thin-liquidity artifacts
+// Compute robust Y-axis bounds using 1st–99th percentile.
+// Always includes the most recent data point (current price) in the visible range.
 function robustYBounds(valArrays) {
   const all = valArrays.flat().filter(v => v != null && !isNaN(v));
   if (!all.length) return { yMin: 0, yMax: 100 };
@@ -693,9 +710,13 @@ function robustYBounds(valArrays) {
   const p01 = all[Math.max(0, Math.floor(all.length * 0.01))];
   const p99 = all[Math.min(all.length - 1, Math.floor(all.length * 0.99))];
   const pad = Math.max((p99 - p01) * 0.12, 3);
+  // Ensure last values of each array are included in the range
+  const lastVals = valArrays.map(a => { const f = a.filter(v=>v!=null); return f[f.length-1]; }).filter(v=>v!=null);
+  const forceMin = lastVals.length ? Math.min(...lastVals) : p01;
+  const forceMax = lastVals.length ? Math.max(...lastVals) : p99;
   return {
-    yMin: Math.max(0,   Math.floor(p01 - pad)),
-    yMax: Math.min(100, Math.ceil(p99  + pad)),
+    yMin: Math.max(0,   Math.floor(Math.min(p01, forceMin) - pad)),
+    yMax: Math.min(100, Math.ceil(Math.max(p99, forceMax)  + pad)),
   };
 }
 
