@@ -551,12 +551,12 @@ def _make_multi_neg_risk(markets_list: list[dict], e: dict, cat: str, outcome: s
     # Sort by the range label (< first, then ascending, > last)
     def sort_key(r):
         lbl = r['sub_label'] or ''
-        if lbl.startswith('<'): return (-1, 0)
-        if lbl.startswith('>'): return (999999, 0)
+        if lbl.startswith('<'): return (0, 0)
+        if lbl.startswith('>'): return (999999999, 0)
         m = re.search(r'\$?([\d,]+)', lbl)
         if m:
             return (int(m.group(1).replace(',', '')), 0)
-        return (0, lbl)
+        return (0, 0)
     results.sort(key=sort_key)
 
     return results if len(results) >= 2 else []
