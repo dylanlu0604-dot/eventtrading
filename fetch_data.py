@@ -128,24 +128,21 @@ def main():
             errors.append(mid)
             continue
 
-        # Find price: market_id preferred, fall back to question substring
+        # Find price: ONLY use market_id for exact lookup.
+        # find_price_by_question (substring) is REMOVED — it causes random wrong-market
+        # matching when multiple sub-markets in one event share similar question text.
         outcome   = cfg.get("outcome", "Yes")
         market_id = cfg.get("market_id")
-        question  = cfg.get("question", "")
 
         price = None
         if market_id:
             price = find_price_by_market_id(event, str(market_id), outcome)
-        if price is None and question:
-            price = find_price_by_question(event, question, outcome)
 
         if price is None:
-            print(f"  WARNING: No price for {mid}")
-            errors.append(mid)
             if mid not in data["markets"]:
                 data["markets"][mid] = {
                     "id": mid, "category": cfg.get("category",""),
-                    "label": cfg.get("label",""), "question": question,
+                    "label": cfg.get("label",""),
                     "polymarket_url": cfg.get("polymarket_url",""),
                     "current": None, "vol_24h": 0, "vol_total": 0,
                     "liquidity": 0, "history": [],
@@ -160,6 +157,12 @@ def main():
             data["markets"][mid] = {"history": []}
 
         m = data["markets"][mid]
+
+        # Detect if market is effectively resolved (≥97% or ≤3%)
+        # Still update current price, but mark as resolved and stop appending to history
+        is_resolved = (price >= 0.97 or price <= 0.03)
+        was_resolved = m.get("resolved", False)
+
         m.update({
             "id":            mid,
             "current":       price,
@@ -167,19 +170,28 @@ def main():
             "sub_label":     cfg.get("sub_label"),
             "group_id":      cfg.get("group_id"),
             "category":      cfg.get("category", m.get("category", "")),
-            "question":      question,
             "polymarket_url":cfg.get("polymarket_url", m.get("polymarket_url", "")),
             "vol_24h":       vol_24h,
             "vol_total":     vol_total,
             "liquidity":     liquidity,
+            "resolved":      is_resolved,
         })
 
-        m["history"].append({"t": now_ts, "v": price})
+        if is_resolved and not was_resolved:
+            # First time hitting resolution threshold — append one final point then stop
+            m["history"].append({"t": now_ts, "v": price})
+            print(f"  ⚑ RESOLVED {cfg.get('label','')[:45]:45s}: {price*100:.1f}%")
+        elif not is_resolved:
+            # Normal active market — keep appending
+            m["history"].append({"t": now_ts, "v": price})
+        # else: already resolved → don't append, price is stable at extreme
+
         if len(m["history"]) > MAX_HISTORY:
             m["history"] = m["history"][-MAX_HISTORY:]
 
         success_count += 1
-        print(f"  ✓ {cfg.get('label','')[:52]:52s}: {price*100:.1f}%")
+        if not is_resolved:
+            print(f"  ✓ {cfg.get('label','')[:52]:52s}: {price*100:.1f}%")
 
     data["last_updated"] = now_ts
 
