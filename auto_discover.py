@@ -43,38 +43,38 @@ OPENAI_MODEL   = "gpt-4o-mini"   # cheapest OpenAI model with good JSON output
 # Quick client-side filter before sending to Claude. Broad intentionally.
 KEYWORD_MAP = {
     "iran_war": [
-        "iran", "iranian", "hormuz", "tehran", "irgc", "khamenei",
-        "nuclear deal", "npt", "pahlavi", "persian gulf", "isfahan",
+        r"\biran\b", r"\biranian\b", "hormuz", "tehran", "irgc", "khamenei",
+        "nuclear deal", r"\bnpt\b", "pahlavi", "persian gulf", "isfahan",
         "enrichment of uranium", "war on iran", "strike iran",
-        "ceasefire.*iran", "iran.*ceasefire", "us.*iran", "iran.*us",
-        "israel.*iran", "iran.*israel", "reza pahlavi", "iran coup",
+        "ceasefire.*iran", "iran.*ceasefire", r"us.*\biran\b", r"\biran\b.*us",
+        r"israel.*\biran\b", r"\biran\b.*israel", "reza pahlavi", "iran coup",
         "iran regime", "iran nuke", "iran nuclear", "iran sanction",
         "iran oil", "iran election", "iran internet", "iran kurds",
     ],
     "interest_rates": [
-        "fed ", "fomc", "rate cut", "rate hike", "interest rate",
+        r"fed ", r"\bfomc\b", "rate cut", "rate hike", "interest rate",
         "federal reserve", "fed decision", "fed rate", "emergency cut",
         "basis point", "fed chair", "monetary policy", "ecb interest",
         "bank of england rate", "pboc rate", "people's bank of china rate",
-        "powell", "warsh", "fed abolish", "credit card interest",
+        r"\bpowell\b", r"\bwarsh\b", "fed abolish", "credit card interest",
         "ecb rate", "boe rate", "bank of japan", "boj rate",
         "quantitative easing", "quantitative tightening",
     ],
     "economy_inflation": [
-        "recession", "inflation", " cpi", "gdp growth", "gdp ",
-        "unemployment", "debt downgrade", "circuit breaker",
+        r"\brecession\b", r"\binflation\b", r"\bcpi\b", "gdp growth", r"\bgdp\b",
+        r"\bunemployment\b", "debt downgrade", "circuit breaker",
         "national debt", "stagflation", "annual inflation",
-        "annual gdp", "world gdp", "tariff", "trade war",
-        "deficit", "debt ceiling", "credit rating", "downgrade",
-        "nfp", "payroll", "job", "consumer price", "pce",
-        "core inflation", "hyperinflation",
+        "annual gdp", "world gdp", r"\btariff\b", "trade war",
+        r"\bdeficit\b", "debt ceiling", "credit rating", r"\bdowngrade\b",
+        r"\bnfp\b", r"\bpayroll\b", r"\bpce\b",
+        "consumer price", "core inflation", "hyperinflation",
     ],
     "markets_assets": [
-        "s&p 500", "(spx)", "gold (gc)", "crude oil (cl)", "wti",
-        "gold vs", "bitcoin vs. gold", "nasdaq 100", "(ndx)",
+        r"s&p 500", r"\(spx\)", r"gold \(gc\)", r"crude oil \(cl\)", r"\bwti\b",
+        "gold vs", "bitcoin vs. gold", "nasdaq 100", r"\(ndx\)",
         "gold futures", "oil futures", "gold hit", "crude oil hit",
-        "gold above", "oil above", "s&p.*hit", "spx.*hit",
-        "dow jones", "vix ", "russell 2000", "brent crude",
+        "gold above", "oil above", r"s&p.*hit", r"spx.*hit",
+        "dow jones", r"\bvix\b", "russell 2000", "brent crude",
         "natural gas", "copper price", "silver price",
         "stock market", "bear market", "bull market",
         "market crash", "market high", "all time high",
@@ -150,12 +150,29 @@ def scan_events(max_events: int = MAX_SCAN_EVENTS) -> list[dict]:
 # ── Step 2: Keyword pre-filter ─────────────────────────────────────────────────
 def keyword_filter(events: list[dict]) -> list[dict]:
     import re
+    from datetime import datetime, timezone, timedelta
     print(f"[2/4] Keyword filtering...")
+    now = datetime.now(timezone.utc)
+    min_end = now + timedelta(days=14)   # skip markets expiring within 14 days
+
     matched = []
+    skipped_expired = 0
     for e in events:
         vol = float(e.get('volume') or 0)
         if vol < MIN_VOLUME:
             continue
+
+        # Skip events whose end date is in the past or within 14 days
+        end_date_str = e.get('endDate') or ''
+        if end_date_str:
+            try:
+                end_dt = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                if end_dt < min_end:
+                    skipped_expired += 1
+                    continue
+            except (ValueError, TypeError):
+                pass
+
         title = e.get('title', '').lower()
         for cat, kws in KEYWORD_MAP.items():
             if any(re.search(kw, title) for kw in kws):
@@ -164,7 +181,7 @@ def keyword_filter(events: list[dict]) -> list[dict]:
                 break
 
     matched.sort(key=lambda e: float(e.get('volume') or 0), reverse=True)
-    print(f"  Keyword-matched: {len(matched)} events (min vol ${MIN_VOLUME:,})")
+    print(f"  Keyword-matched: {len(matched)} events (min vol ${MIN_VOLUME:,}, skipped {skipped_expired} near-expiry)")
     for cat in KEYWORD_MAP:
         n = sum(1 for e in matched if e.get('_kw_cat') == cat)
         print(f"    {cat}: {n}")
@@ -250,7 +267,7 @@ def claude_classify(events: list[dict]) -> list[dict]:
 For each event return:
 1. "category": one of the 4 above, or null
 2. "market_id": ID of the single most informative market to track (prefer binary Yes/No on meaningful thresholds)
-3. "outcome": "Yes" or "No"
+3. "outcome": ALWAYS "Yes" — we always track the Yes probability
 4. "reason": max 10 words
 
 Events:
@@ -297,6 +314,7 @@ Return ONLY a JSON array, one object per event, same order:
             eid = str(e['id'])
             cls = cls_map.get(eid)
             if cls and cls.get('category') and cls.get('market_id'):
+                cls['outcome'] = 'Yes'   # always track Yes probability
                 items_out = build_result(e, cls)
             else:
                 items_out = keyword_fallback_single(e)
