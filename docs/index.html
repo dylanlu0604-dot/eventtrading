@@ -511,10 +511,12 @@ function renderRightSingle(id){
     const canvas=document.getElementById('mainChart');
     if(!canvas)return;
     if(mainChart){mainChart.destroy();mainChart=null;}
+    const vals=pts.map(h=>pctN(h.v));
+    const{yMin,yMax}=robustYBounds([vals]);
     mainChart=new Chart(canvas.getContext('2d'),{
       type:'line',
-      data:{labels:pts.map(h=>h.t),datasets:[{label:'Probability',data:pts.map(h=>pctN(h.v)),borderColor:c.main,backgroundColor:c.dim,borderWidth:2,pointRadius:0,pointHoverRadius:5,fill:true,tension:0.3}]},
-      options:chartOpts(col)
+      data:{labels:pts.map(h=>h.t),datasets:[{label:'Probability',data:vals,borderColor:c.main,backgroundColor:c.dim,borderWidth:2,pointRadius:0,pointHoverRadius:5,fill:true,tension:0.3}]},
+      options:{...chartOpts(col,yMin,yMax), spanGaps:true}
     });
   });
 }
@@ -626,10 +628,8 @@ function drawMultiChart(members, col){
     };
   });
 
-  // Y-axis: zoom to actual data range across all members
-  const allVals=datasets.flatMap(d=>d.data.filter(v=>v!=null));
-  const yMin=allVals.length?Math.max(0,Math.min(...allVals)-5):0;
-  const yMax=allVals.length?Math.min(100,Math.max(...allVals)+5):100;
+  // Y-axis: use percentile-based bounds across all members (ignores resolved spikes)
+  const{yMin,yMax}=robustYBounds(datasets.map(d=>d.data));
 
   mainChart=new Chart(canvas.getContext('2d'),{
     type:'line',
@@ -684,8 +684,23 @@ function toggleDim(mid,gid){
   });
 }
 
+// ── Robust Y-axis: use 1st–99th percentile to ignore outlier spikes ──
+// Preserves genuine large market moves; only clips single-point thin-liquidity artifacts
+function robustYBounds(valArrays) {
+  const all = valArrays.flat().filter(v => v != null && !isNaN(v));
+  if (!all.length) return { yMin: 0, yMax: 100 };
+  all.sort((a, b) => a - b);
+  const p01 = all[Math.max(0, Math.floor(all.length * 0.01))];
+  const p99 = all[Math.min(all.length - 1, Math.floor(all.length * 0.99))];
+  const pad = Math.max((p99 - p01) * 0.12, 3);
+  return {
+    yMin: Math.max(0,   Math.floor(p01 - pad)),
+    yMax: Math.min(100, Math.ceil(p99  + pad)),
+  };
+}
+
 // ── Chart.js base opts ────────────────────────────────────
-function chartOpts(col){
+function chartOpts(col, yMin=0, yMax=100){
   return{
     responsive:true,maintainAspectRatio:false,animation:{duration:300},
     interaction:{mode:'index',intersect:false},
@@ -694,9 +709,14 @@ function chartOpts(col){
       tooltip:{
         backgroundColor:'#1a1e2a',borderColor:'#2e3448',borderWidth:1,
         titleColor:'#8899b0',bodyColor:'#e2e8f0',
+        filter: item => item.parsed.y != null,
         callbacks:{
           title:ctx=>formatTime(ctx[0].label||ctx[0].raw?.x),
-          label:ctx=>' '+(ctx.parsed?.y??ctx.raw?.y??0).toFixed(2)+'% — '+(ctx.dataset.label||'')
+          label:ctx=>{
+            const v=ctx.parsed?.y;
+            if(v==null)return null;
+            return' '+v.toFixed(2)+'%'+(ctx.dataset.label?' — '+ctx.dataset.label:'');
+          }
         }
       }
     },
@@ -704,7 +724,7 @@ function chartOpts(col){
       x:{display:true,border:{display:false},
         ticks:{color:'#50637a',maxTicksLimit:8,maxRotation:0,callback(v){return new Date(this.getLabelForValue(v)).toLocaleDateString('en-US',{month:'short',day:'numeric'})}},
         grid:{color:'rgba(255,255,255,.03)'}},
-      y:{display:true,min:0,max:100,border:{display:false},
+      y:{display:true,min:yMin,max:yMax,border:{display:false},
         ticks:{color:'#50637a',callback:v=>v+'%',maxTicksLimit:6},
         grid:{color:'rgba(255,255,255,.03)'}}
     }
