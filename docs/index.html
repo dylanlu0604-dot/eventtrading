@@ -552,15 +552,25 @@ function renderRightMulti(gid, highlightId=null){
   requestAnimationFrame(()=>drawMultiChart(members, col));
 }
 
+// Round ISO timestamp string to nearest 30-min bucket
+function roundTo30m(iso){
+  const ms=new Date(iso).getTime();
+  return new Date(Math.floor(ms/(30*60*1000))*(30*60*1000)).toISOString().replace('.000Z','Z');
+}
+
 function drawMultiChart(members, col){
   const canvas=document.getElementById('mainChart');
   if(!canvas)return;
   if(mainChart){mainChart.destroy();mainChart=null;}
 
-  // Build unified sorted label set from all members' filtered history
+  // Round all timestamps to 30-min buckets so different markets align
   const allTs=new Set();
   const memberPts=members.map(m=>{
-    const pts=filterH(m.history,selectedRange);
+    const raw=filterH(m.history,selectedRange);
+    // Downsample: keep last value per 30-min bucket
+    const buckets={};
+    for(const h of raw) buckets[roundTo30m(h.t)]=h.v;
+    const pts=Object.entries(buckets).map(([t,v])=>({t,v})).sort((a,b)=>a.t<b.t?-1:1);
     pts.forEach(h=>allTs.add(h.t));
     return{m,pts};
   });
@@ -569,11 +579,10 @@ function drawMultiChart(members, col){
   const datasets=memberPts.map(({m,pts},i)=>{
     const color=PALETTE[i%PALETTE.length];
     const isDim=dimmedLines.has(m.id);
-    // Map each label to the nearest value (or null)
-    const tsMap=Object.fromEntries(pts.map(h=>[h.t, pctN(h.v)]));
+    const tsMap=Object.fromEntries(pts.map(h=>[h.t,pctN(h.v)]));
     const data=labels.map(t=>tsMap[t]??null);
     return{
-      label:m.sub_label||m.label,
+      label:m.sub_label||m.question||m.label,
       data,
       borderColor:color,
       backgroundColor:'transparent',
@@ -583,6 +592,11 @@ function drawMultiChart(members, col){
       borderDash:isDim?[4,4]:[],
     };
   });
+
+  // Y-axis: zoom to actual data range across all members
+  const allVals=datasets.flatMap(d=>d.data.filter(v=>v!=null));
+  const yMin=allVals.length?Math.max(0,Math.min(...allVals)-5):0;
+  const yMax=allVals.length?Math.min(100,Math.max(...allVals)+5):100;
 
   mainChart=new Chart(canvas.getContext('2d'),{
     type:'line',
@@ -596,6 +610,7 @@ function drawMultiChart(members, col){
         tooltip:{
           backgroundColor:'#1a1e2a',borderColor:'#2e3448',borderWidth:1,
           titleColor:'#8899b0',bodyColor:'#e2e8f0',
+          filter:item=>item.parsed.y!=null,
           callbacks:{
             title:ctx=>formatTime(ctx[0].label),
             label:ctx=>{
@@ -613,7 +628,7 @@ function drawMultiChart(members, col){
             callback(v){return new Date(this.getLabelForValue(v)).toLocaleDateString('en-US',{month:'short',day:'numeric'})}},
           grid:{color:'rgba(255,255,255,.03)'}
         },
-        y:{display:true,min:0,max:100,border:{display:false},
+        y:{display:true,min:yMin,max:yMax,border:{display:false},
           ticks:{color:'#50637a',callback:v=>v+'%',maxTicksLimit:6},
           grid:{color:'rgba(255,255,255,.03)'}
         }
