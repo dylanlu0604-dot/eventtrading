@@ -33,8 +33,8 @@ CLOB_API        = "https://clob.polymarket.com"
 CONFIG_PATH     = os.path.join(os.path.dirname(__file__), "markets_config.json")
 MAX_SCAN_EVENTS = 3000      # scan up to this many events
 SCAN_PAGE_SIZE  = 100
-MIN_VOLUME      = 1_000      # skip events with less than $1K total volume
-MAX_MARKETS_PER_CAT = 40    # max markets to track per category
+MIN_VOLUME      = 5_000      # skip events with less than $5K total volume
+MAX_MARKETS_PER_CAT = 20    # max markets to track per category (was 40)
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL   = "gpt-4o-mini"   # cheapest OpenAI model with good JSON output
