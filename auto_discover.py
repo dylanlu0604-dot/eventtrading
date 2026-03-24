@@ -338,82 +338,134 @@ DATE_RE = re.compile(
     r'|\bend of (march|june|september|december|2025|2026|2027)\b',
     re.IGNORECASE
 )
-
-# Price/threshold pattern
-PRICE_LEVEL_RE = re.compile(
-    r'\$[\d,]+|\d+%|\d+\s*(bps|basis|percent)|'
-    r'\b(high|low|above|below|settle|hit|reach)\b.*\$',
-    re.IGNORECASE
-)
-
 PRICE_VALUE_RE = re.compile(r'\$[\d,]+(?:\.\d+)?[KMBk]?')
+BPS_NUM_RE   = re.compile(r'\d+\s*\+?\s*bps|\d+\s*basis\s*point', re.IGNORECASE)
+BPS_ACTION_RE= re.compile(r'\bno change\b|\bhold\b|\bhike\b|\bcut\b|\bunchanged\b|'
+                           r'decrease.*by\s+\d+|increase.*by\s+\d+', re.IGNORECASE)
 
 
-def is_date_series(markets: list[dict]) -> bool:
-    """True if ≥3 sub-markets share a date-deadline pattern."""
-    date_markets = [m for m in markets if DATE_RE.search(m.get('question', ''))]
-    if len(date_markets) < 3:
+def _parse_list(v):
+    if isinstance(v, list): return v
+    try: return json.loads(v)
+    except Exception: return []
+
+
+def _common_prefix_len(strings: list[str]) -> int:
+    if not strings: return 0
+    prefix = strings[0]
+    for s in strings[1:]:
+        while not s.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix: return 0
+    return len(prefix)
+
+
+def _common_suffix_len(strings: list[str]) -> int:
+    return _common_prefix_len([s[::-1] for s in strings])
+
+
+def _extract_diff(q: str, prefix_len: int, suffix_len: int) -> str:
+    """Extract the unique middle part of a question."""
+    end = len(q) - suffix_len if suffix_len > 0 else len(q)
+    diff = q[prefix_len:end].strip(' ?.,()- \t')
+    return diff
+
+
+def smart_label_fn(questions: list[str]):
+    """Build a per-question label function that extracts what makes each unique."""
+    if len(questions) < 2:
+        return lambda q: q[:25]
+
+    prefix_len = _common_prefix_len(questions)
+    suffix_len  = _common_suffix_len(questions)
+
+    def label_fn(q: str) -> str:
+        diff = _extract_diff(q, prefix_len, suffix_len)
+
+        # 1. Numeric bps — search full question (suffix may have consumed the trailing 's' of 'bps')
+        bm = BPS_NUM_RE.search(q)
+        if bm:
+            return bm.group(0).strip()[:15]
+
+        # 2. Price value — search full question
+        pm = PRICE_VALUE_RE.search(q)
+        if pm:
+            q_l = q.lower()
+            qual = (' H' if '(high)' in q_l else
+                    ' L' if '(low)'  in q_l else
+                    '+' if 'above'  in q_l else
+                    '-' if 'below'  in q_l else '')
+            return pm.group(0) + qual
+
+        # 3. Date in DIFF only (avoids matching common-suffix date like "June 2026")
+        dm = DATE_RE.search(diff)
+        if dm:
+            raw = dm.group(0).strip()
+            parts = raw.split()
+            if len(parts) >= 2:
+                mon = parts[0][:3].capitalize()
+                day = re.search(r'\d+', parts[1])
+                if day:
+                    return f"{mon} {day.group()}"
+            return raw[:12]
+
+        # 4. Action keyword in DIFF ("no change", "hold", "hike")
+        am = BPS_ACTION_RE.search(diff)
+        if am:
+            return am.group(0).strip()[:20]
+
+        # 5. Diff text (country name, entity, etc.)
+        if diff and len(diff) >= 2:
+            return diff[:25]
+
+        # 6. Last resort
+        tokens = [t for t in q.split() if len(t) > 2]
+        return tokens[0][:20] if tokens else q[:15]
+
+    return label_fn
+
+
+def is_multi_series(markets: list[dict]) -> bool:
+    """True if the event has ≥2 Yes/No sub-markets that are meaningfully different.
+    Detection based on shared prefix OR shared suffix — covers:
+    - Date deadlines:  'ceasefire by Mar 31 / Apr 15 / Jun 30'
+    - Price levels:    'hit $7,450 / $7,700 / $6,600'
+    - Entity variants: 'UAE strike Iran / Israel strike Iran / US strike Iran'
+    - Action variants: 'Fed cut 25bps / hold / hike after June meeting'
+    """
+    yes_no = [m for m in markets
+              if 'Yes' in _parse_list(m.get('outcomes', '[]'))]
+    if len(yes_no) < 2:
         return False
-    price_count = sum(1 for m in date_markets if PRICE_LEVEL_RE.search(m.get('question', '')))
-    if price_count > len(date_markets) // 2:
+
+    questions = [m.get('question', '') for m in yes_no]
+    prefix_len = _common_prefix_len(questions)
+    suffix_len  = _common_suffix_len(questions)
+
+    # Must share substantial common context (either prefix or suffix ≥ 8 chars)
+    if prefix_len < 8 and suffix_len < 8:
         return False
-    return True
 
-
-def is_price_series(markets: list[dict]) -> bool:
-    """True if ≥3 sub-markets are price-threshold variants of the same question.
-    e.g. 'Will S&P 500 hit $7,450', 'Will S&P 500 hit $7,700', etc."""
-    if len(markets) < 3:
-        return False
-    # Each must contain a dollar amount
-    price_qs = [m for m in markets if PRICE_VALUE_RE.search(m.get('question', ''))]
-    if len(price_qs) < 3:
-        return False
-    # Questions must share a common trigger word
-    trigger = ['hit', 'above', 'settle', 'reach', 'exceed', 'below', 'close at',
-               'gain', 'lose', 'drop', 'fall']
-    matched = [m for m in price_qs
-               if any(kw in m.get('question', '').lower() for kw in trigger)]
-    return len(matched) >= 3
-
-
-def _extract_price_label(question: str) -> str | None:
-    """Extract '$X,XXX' or 'above $X' label from a price-threshold question."""
-    m = PRICE_VALUE_RE.search(question)
-    if m:
-        # Include HIGH/LOW qualifier if present
-        q_lower = question.lower()
-        qualifier = ''
-        if '(high)' in q_lower: qualifier = ' H'
-        elif '(low)' in q_lower: qualifier = ' L'
-        elif 'above' in q_lower: qualifier = '+'
-        elif 'below' in q_lower: qualifier = '-'
-        return m.group(0) + qualifier
-    return None
+    # Each question must have a non-trivial unique diff part
+    diffs = [_extract_diff(q, prefix_len, suffix_len) for q in questions]
+    meaningful = [d for d in diffs if len(d) >= 2]
+    return len(meaningful) >= 2
 
 
 def build_result(e: dict, cls: dict) -> list[dict]:
-    """Return one or more result dicts for an event.
-    - Date-series: one entry per deadline, shared group_id
-    - Price-series: one entry per price level, shared group_id
-    - Otherwise: single entry
-    """
     cat     = cls.get('category')
     outcome = cls.get('outcome', 'Yes')
     mid     = str(cls.get('market_id', ''))
     markets = e.get('markets', [])
 
-    if is_date_series(markets):
-        multi = _make_multi(e, cat, outcome, label_fn=_extract_date_label)
-        if multi:
+    if is_multi_series(markets):
+        yes_no    = [m for m in markets if outcome in _parse_list(m.get('outcomes', '[]'))]
+        questions = [m.get('question', '') for m in yes_no]
+        lbl_fn    = smart_label_fn(questions)
+        multi = _make_multi(e, cat, outcome, label_fn=lbl_fn)
+        if multi and len(multi) >= 2:
             return multi
 
-    if is_price_series(markets):
-        multi = _make_multi(e, cat, outcome, label_fn=_extract_price_label)
-        if multi:
-            return multi
-
-    # Single-market result
     market = next((m for m in markets if str(m.get('id')) == mid), None)
     if not market and markets:
         market = markets[0]
@@ -423,27 +475,22 @@ def build_result(e: dict, cls: dict) -> list[dict]:
 
 
 def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
-    """One result per sub-market, linked by group_id.
-    label_fn: callable(question) -> short label string or None
-    """
+    """One result per sub-market with the given outcome, linked by group_id."""
     if label_fn is None:
-        label_fn = _extract_date_label
+        label_fn = lambda q: q[:25]
+
     group_id = _make_id(e.get('title', ''))
     slug     = e.get('slug') or e.get('ticker') or ''
     results  = []
 
     for m in e.get('markets', []):
-        q        = m.get('question', '')
-        outcomes = m.get('outcomes', '[]')
-        prices   = m.get('outcomePrices', '[]')
-        tokens   = m.get('clobTokenIds', '[]')
-        if isinstance(outcomes, str): outcomes = json.loads(outcomes)
-        if isinstance(prices,   str): prices   = json.loads(prices)
-        if isinstance(tokens,   str): tokens   = json.loads(tokens)
+        outcomes = _parse_list(m.get('outcomes', '[]'))
+        tokens   = _parse_list(m.get('clobTokenIds', '[]'))
 
         if outcome not in outcomes:
             continue
 
+        q         = m.get('question', '')
         sub_label = label_fn(q)
         if not sub_label:
             continue
@@ -473,10 +520,7 @@ def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
             "liquidity":     round(float(e.get('liquidity') or 0)),
         })
 
-    if len(results) < 3:
-        return []
-
-    return results
+    return results if len(results) >= 2 else []
 
 
 def _make_single(e: dict, cat: str, market: dict, outcome: str) -> dict:
@@ -552,19 +596,14 @@ def keyword_fallback_single(e: dict) -> list[dict]:
     markets = e.get('markets', [])
     if not markets:
         return []
-    if is_date_series(markets):
-        multi = _make_multi(e, cat, 'Yes', label_fn=_extract_date_label)
+    if is_multi_series(markets):
+        multi = _make_multi(e, cat, 'Yes',
+                            label_fn=smart_label_fn([m.get('question','') for m in markets
+                                                     if 'Yes' in _parse_list(m.get('outcomes','[]'))]))
         if multi:
             return multi
-    if is_price_series(markets):
-        multi = _make_multi(e, cat, 'Yes', label_fn=_extract_price_label)
-        if multi:
-            return multi
-    # Fall back to single best market
     for m in markets:
-        outcomes = m.get('outcomes', '[]')
-        if isinstance(outcomes, str): outcomes = json.loads(outcomes)
-        if 'Yes' in outcomes:
+        if 'Yes' in _parse_list(m.get('outcomes', '[]')):
             return [_make_single(e, cat, m, 'Yes')]
     return []
 
