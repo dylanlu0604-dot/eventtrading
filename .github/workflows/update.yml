@@ -84,21 +84,13 @@ jobs:
       - name: Fetch latest prices
         run: python fetch_data.py
 
-      # ── Commit data.json ───────────────────────────────────────────────────
-      - name: Commit data.json
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "data: auto-update [skip ci]"
-          file_pattern: "docs/data.json"
-          commit_user_name: github-actions[bot]
-          commit_user_email: github-actions[bot]@users.noreply.github.com
-
-      # ── Commit markets_config.json if it was updated ───────────────────────
-      - name: Commit markets_config if updated
+      # ── Commit all updated files ───────────────────────────────────────────
+      - name: Commit updated files
         run: |
-          if [ -f markets_config.json ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add markets_config.json
-            git diff --cached --quiet || git commit -m "data: update markets_config [skip ci]" && git push || true
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          git add docs/data.json
+          [ -f markets_config.json ] && git add markets_config.json || true
+          git diff --cached --quiet || git commit -m "data: auto-update [skip ci]"
+          git push
