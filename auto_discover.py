@@ -339,49 +339,79 @@ DATE_RE = re.compile(
     re.IGNORECASE
 )
 
-# Keywords that indicate a price-level series, NOT a date series
+# Price/threshold pattern
 PRICE_LEVEL_RE = re.compile(
     r'\$[\d,]+|\d+%|\d+\s*(bps|basis|percent)|'
     r'\b(high|low|above|below|settle|hit|reach)\b.*\$',
     re.IGNORECASE
 )
 
+PRICE_VALUE_RE = re.compile(r'\$[\d,]+(?:\.\d+)?[KMBk]?')
+
 
 def is_date_series(markets: list[dict]) -> bool:
-    """
-    True only if this is a genuine deadline-series event:
-    - ≥3 sub-markets that each have a DATE in the question
-    - Sub-markets are NOT price-level variants (e.g. $5,000 / $6,000 / $7,000)
-    - Sub-market questions share the same stem but differ only by date
-    """
+    """True if ≥3 sub-markets share a date-deadline pattern."""
     date_markets = [m for m in markets if DATE_RE.search(m.get('question', ''))]
     if len(date_markets) < 3:
         return False
-
-    # Reject if sub-markets look like price-level variants instead of date variants
     price_count = sum(1 for m in date_markets if PRICE_LEVEL_RE.search(m.get('question', '')))
     if price_count > len(date_markets) // 2:
-        return False  # majority are price levels, not date deadlines
-
+        return False
     return True
+
+
+def is_price_series(markets: list[dict]) -> bool:
+    """True if ≥3 sub-markets are price-threshold variants of the same question.
+    e.g. 'Will S&P 500 hit $7,450', 'Will S&P 500 hit $7,700', etc."""
+    if len(markets) < 3:
+        return False
+    # Each must contain a dollar amount
+    price_qs = [m for m in markets if PRICE_VALUE_RE.search(m.get('question', ''))]
+    if len(price_qs) < 3:
+        return False
+    # Questions must share a common trigger word
+    trigger = ['hit', 'above', 'settle', 'reach', 'exceed', 'below', 'close at',
+               'gain', 'lose', 'drop', 'fall']
+    matched = [m for m in price_qs
+               if any(kw in m.get('question', '').lower() for kw in trigger)]
+    return len(matched) >= 3
+
+
+def _extract_price_label(question: str) -> str | None:
+    """Extract '$X,XXX' or 'above $X' label from a price-threshold question."""
+    m = PRICE_VALUE_RE.search(question)
+    if m:
+        # Include HIGH/LOW qualifier if present
+        q_lower = question.lower()
+        qualifier = ''
+        if '(high)' in q_lower: qualifier = ' H'
+        elif '(low)' in q_lower: qualifier = ' L'
+        elif 'above' in q_lower: qualifier = '+'
+        elif 'below' in q_lower: qualifier = '-'
+        return m.group(0) + qualifier
+    return None
 
 
 def build_result(e: dict, cls: dict) -> list[dict]:
     """Return one or more result dicts for an event.
-    Date-series events (e.g. 'ceasefire by March 31 / April 15 / …')
-    return one entry per date sub-market, all sharing a group_id.
-    Other events return a single entry.
+    - Date-series: one entry per deadline, shared group_id
+    - Price-series: one entry per price level, shared group_id
+    - Otherwise: single entry
     """
     cat     = cls.get('category')
-    mid     = str(cls.get('market_id', ''))
     outcome = cls.get('outcome', 'Yes')
+    mid     = str(cls.get('market_id', ''))
     markets = e.get('markets', [])
 
     if is_date_series(markets):
-        multi = _make_multi(e, cat, outcome)
+        multi = _make_multi(e, cat, outcome, label_fn=_extract_date_label)
         if multi:
             return multi
-        # Fall through to single if _make_multi couldn't produce clean labels
+
+    if is_price_series(markets):
+        multi = _make_multi(e, cat, outcome, label_fn=_extract_price_label)
+        if multi:
+            return multi
 
     # Single-market result
     market = next((m for m in markets if str(m.get('id')) == mid), None)
@@ -392,8 +422,12 @@ def build_result(e: dict, cls: dict) -> list[dict]:
     return [_make_single(e, cat, market, outcome)]
 
 
-def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
-    """One result per date sub-market, linked by group_id."""
+def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
+    """One result per sub-market, linked by group_id.
+    label_fn: callable(question) -> short label string or None
+    """
+    if label_fn is None:
+        label_fn = _extract_date_label
     group_id = _make_id(e.get('title', ''))
     slug     = e.get('slug') or e.get('ticker') or ''
     results  = []
@@ -410,10 +444,9 @@ def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
         if outcome not in outcomes:
             continue
 
-        # Only include sub-markets with a clean date label
-        sub_label = _extract_date_label(q)
+        sub_label = label_fn(q)
         if not sub_label:
-            continue   # skip sub-markets without a recognisable date
+            continue
 
         token_id = None
         for o, t in zip(outcomes, tokens):
@@ -440,9 +473,8 @@ def _make_multi(e: dict, cat: str, outcome: str) -> list[dict]:
             "liquidity":     round(float(e.get('liquidity') or 0)),
         })
 
-    # If we couldn't extract clean labels for enough sub-markets, fall back to single
     if len(results) < 3:
-        return []   # caller will use keyword_fallback_single → _make_single
+        return []
 
     return results
 
@@ -521,7 +553,11 @@ def keyword_fallback_single(e: dict) -> list[dict]:
     if not markets:
         return []
     if is_date_series(markets):
-        multi = _make_multi(e, cat, 'Yes')
+        multi = _make_multi(e, cat, 'Yes', label_fn=_extract_date_label)
+        if multi:
+            return multi
+    if is_price_series(markets):
+        multi = _make_multi(e, cat, 'Yes', label_fn=_extract_price_label)
         if multi:
             return multi
     # Fall back to single best market
