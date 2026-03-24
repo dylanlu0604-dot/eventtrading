@@ -459,50 +459,52 @@ def build_result(e: dict, cls: dict) -> list[dict]:
     markets = e.get('markets', [])
 
     if is_multi_series(markets):
-        yes_no    = [m for m in markets if outcome in _parse_list(m.get('outcomes', '[]'))]
+        # Filter out effectively resolved sub-markets before building group
+        active_markets = [m for m in markets if not _is_effectively_resolved(m)]
+        if len(active_markets) < 2:
+            active_markets = markets  # don't over-filter; fall through
+
+        yes_no    = [m for m in active_markets if outcome in _parse_list(m.get('outcomes', '[]'))]
         questions = [m.get('question', '') for m in yes_no]
-        lbl_fn    = smart_label_fn(questions)
-        multi = _make_multi(e, cat, outcome, label_fn=lbl_fn)
-        if multi and len(multi) >= 2:
-            return multi
+        if len(questions) >= 2:
+            lbl_fn = smart_label_fn(questions)
+            multi  = _make_multi_from(active_markets, e, cat, outcome, lbl_fn)
+            if multi and len(multi) >= 2:
+                return multi
 
-    market = next((m for m in markets if str(m.get('id')) == mid), None)
-    if not market and markets:
-        market = markets[0]
-    if not market:
+    # Single-market fallback — pick the best (non-resolved) market
+    best = _pick_best_market(markets, outcome)
+    if not best:
+        # last resort: market_id from GPT
+        best = next((m for m in markets if str(m.get('id')) == mid), None)
+    if not best and markets:
+        best = markets[0]
+    if not best:
         return []
-    return [_make_single(e, cat, market, outcome)]
+    return [_make_single(e, cat, best, outcome)]
 
 
-def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
-    """One result per sub-market with the given outcome, linked by group_id."""
-    if label_fn is None:
-        label_fn = lambda q: q[:25]
-
+def _make_multi_from(markets_list: list[dict], e: dict, cat: str,
+                     outcome: str, label_fn) -> list[dict]:
+    """Same as _make_multi but takes a pre-filtered markets list."""
     group_id = _make_id(e.get('title', ''))
     slug     = e.get('slug') or e.get('ticker') or ''
     results  = []
-
-    for m in e.get('markets', []):
+    for m in markets_list:
         outcomes = _parse_list(m.get('outcomes', '[]'))
         tokens   = _parse_list(m.get('clobTokenIds', '[]'))
-
         if outcome not in outcomes:
             continue
-
         q         = m.get('question', '')
         sub_label = label_fn(q)
         if not sub_label:
             continue
-
         token_id = None
         for o, t in zip(outcomes, tokens):
             if o == outcome:
                 token_id = t
                 break
-
         sub_id = (group_id + '_' + _make_id(sub_label))[:60]
-
         results.append({
             "id":            sub_id,
             "group_id":      group_id,
@@ -519,15 +521,76 @@ def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
             "volume_24h":    round(float(e.get('volume24hr') or 0)),
             "liquidity":     round(float(e.get('liquidity') or 0)),
         })
-
     return results if len(results) >= 2 else []
 
 
-def _make_single(e: dict, cat: str, market: dict, outcome: str) -> dict:
-    tokens   = market.get('clobTokenIds', '[]')
+def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
+    """Legacy wrapper — used by keyword_fallback_single."""
+    if label_fn is None:
+        label_fn = lambda q: q[:25]
+    return _make_multi_from(e.get('markets', []), e, cat, outcome, label_fn)
+
+
+def _is_effectively_resolved(market: dict) -> bool:
+    """Return True if a market is effectively resolved (≥99% or ≤1%)."""
+    prices = market.get('outcomePrices', '[]')
+    if isinstance(prices, str):
+        try: prices = json.loads(prices)
+        except: return False
     outcomes = market.get('outcomes', '[]')
-    if isinstance(tokens, str):   tokens   = json.loads(tokens)
-    if isinstance(outcomes, str): outcomes = json.loads(outcomes)
+    if isinstance(outcomes, str):
+        try: outcomes = json.loads(outcomes)
+        except: return False
+    for o, p in zip(outcomes, prices):
+        if o in ('Yes', 'No'):
+            try:
+                v = float(p)
+                if v >= 0.99 or v <= 0.01:
+                    return True
+            except: pass
+    return False
+
+
+def _pick_best_market(markets: list[dict], outcome: str = 'Yes') -> dict | None:
+    """Pick the most informative single market from an event's market list.
+    Prefers markets that:
+    1. Are NOT effectively resolved (≥99% or ≤1%)
+    2. Have the highest liquidity / volume
+    3. Have the target outcome available
+    """
+    candidates = []
+    for m in markets:
+        outcomes = _parse_list(m.get('outcomes', '[]'))
+        if outcome not in outcomes:
+            continue
+        if _is_effectively_resolved(m):
+            continue
+        prices = _parse_list(m.get('outcomePrices', '[]'))
+        try:
+            idx = outcomes.index(outcome)
+            prob = float(prices[idx])
+        except (ValueError, IndexError):
+            prob = 0.5
+        # Score: prefer markets near 50% (most uncertain/interesting)
+        # but any non-resolved market is better than a resolved one
+        uncertainty = 1 - abs(prob - 0.5) * 2  # 1.0 at 50%, 0.0 at 0% or 100%
+        candidates.append((uncertainty, m))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
+
+    # Fall back to any market with the target outcome (even if resolved)
+    for m in markets:
+        outcomes = _parse_list(m.get('outcomes', '[]'))
+        if outcome in outcomes:
+            return m
+    return None
+
+
+def _make_single(e: dict, cat: str, market: dict, outcome: str) -> dict:
+    tokens   = _parse_list(market.get('clobTokenIds', '[]'))
+    outcomes = _parse_list(market.get('outcomes', '[]'))
 
     token_id = None
     for o, t in zip(outcomes, tokens):
@@ -596,15 +659,22 @@ def keyword_fallback_single(e: dict) -> list[dict]:
     markets = e.get('markets', [])
     if not markets:
         return []
-    if is_multi_series(markets):
-        multi = _make_multi(e, cat, 'Yes',
-                            label_fn=smart_label_fn([m.get('question','') for m in markets
-                                                     if 'Yes' in _parse_list(m.get('outcomes','[]'))]))
-        if multi:
-            return multi
-    for m in markets:
-        if 'Yes' in _parse_list(m.get('outcomes', '[]')):
-            return [_make_single(e, cat, m, 'Yes')]
+
+    active = [m for m in markets if not _is_effectively_resolved(m)]
+    if len(active) < 2:
+        active = markets
+
+    if is_multi_series(active):
+        yes_no = [m for m in active if 'Yes' in _parse_list(m.get('outcomes', '[]'))]
+        questions = [m.get('question', '') for m in yes_no]
+        if len(questions) >= 2:
+            multi = _make_multi_from(active, e, cat, 'Yes', smart_label_fn(questions))
+            if multi:
+                return multi
+
+    best = _pick_best_market(markets, 'Yes')
+    if best:
+        return [_make_single(e, cat, best, 'Yes')]
     return []
 
 
