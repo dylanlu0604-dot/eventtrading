@@ -14,6 +14,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      force_rebackfill:
+        description: 'Force re-backfill ALL markets (fixes historical spikes)?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -51,6 +57,13 @@ jobs:
         run: |
           echo "=== backfill_history.py (new markets only) ==="
           python backfill_history.py --days 365 --min-pts 100
+
+      # ── Force re-backfill ALL markets (clears spike artifacts) ─────────────
+      - name: Force re-backfill all markets (daily fidelity)
+        if: github.event.inputs.force_rebackfill == 'true'
+        run: |
+          echo "=== backfill_history.py --force (daily fidelity, removes spikes) ==="
+          python backfill_history.py --days 365 --force
 
       # ── Price fetch (every 30 min) ─────────────────────────────────────────
       - name: Fetch latest prices
