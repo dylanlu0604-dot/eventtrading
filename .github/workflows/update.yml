@@ -20,6 +20,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      clean_history:
+        description: 'Clean corrupted history (99%↔2% swings) then re-backfill?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -57,6 +63,15 @@ jobs:
         run: |
           echo "=== backfill_history.py (new markets only) ==="
           python backfill_history.py --days 365 --min-pts 100
+
+      # ── Clean corrupted history then re-backfill ──────────────────────────
+      - name: Clean corrupted history + re-backfill
+        if: github.event.inputs.clean_history == 'true'
+        run: |
+          echo "=== clean_history.py --apply ==="
+          python clean_history.py --apply
+          echo "=== backfill_history.py --force ==="
+          python backfill_history.py --days 365 --force
 
       # ── Force re-backfill ALL markets (clears spike artifacts) ─────────────
       - name: Force re-backfill all markets (daily fidelity)
