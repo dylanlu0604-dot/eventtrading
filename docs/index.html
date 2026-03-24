@@ -336,11 +336,32 @@ function renderList(){
         // ── Group row ──
         const gid=item._groupId;
         const members=(groups[gid]||[]).sort((a,b)=>{
-          // sort sub-markets: try date order
-          const da=new Date(a.sub_label||'9999').getTime()||0;
-          const db=new Date(b.sub_label||'9999').getTime()||0;
-          return da-db;
+          const aNum=parseFloat((a.sub_label||'').replace(/[$,]/g,''));
+          const bNum=parseFloat((b.sub_label||'').replace(/[$,]/g,''));
+          if(!isNaN(aNum)&&!isNaN(bNum)) return aNum-bNum;
+          const da=new Date((a.sub_label||'')+'2026').getTime()||0;
+          const db=new Date((b.sub_label||'')+'2026').getTime()||0;
+          if(da&&db) return da-db;
+          return(a.sub_label||'').localeCompare(b.sub_label||'');
         });
+
+        // Degrade to single row if only 1 member
+        if(members.length<=1){
+          if(members.length===1){
+            const m=members[0];
+            const dA=d24h(m.history);
+            const isSel=selectedId===m.id||selectedGroupId===gid;
+            html+=`<div class="mrow${isSel?' selected':''}" id="row-${m.id}"
+              style="${isSel?`--sel-color:${cc};`:''}"
+              onclick="handleSelect('${m.id}')">
+              <div class="m-label">${m.label}</div>
+              <div class="m-prob ${cat.color}">${pct(m.current)}</div>
+              <div class="m-delta ${dcls(dA)}">${dstr(dA)}</div>
+              <div class="m-spark"><canvas id="spark-${m.id}"></canvas></div>
+            </div>`;
+          }
+          continue;
+        }
         const isOpen=openGroups.has(gid);
         const isGrpSel=selectedGroupId===gid;
         html+=`<div class="group-header${isGrpSel?' group-selected':''}" id="grp-${gid}"
@@ -504,27 +525,39 @@ function renderRightMulti(gid, highlightId=null){
   const members=Object.values(markets)
     .filter(m=>m.group_id===gid)
     .sort((a,b)=>{
-      const da=new Date(a.sub_label||'9999').getTime()||0;
-      const db=new Date(b.sub_label||'9999').getTime()||0;
-      return da-db;
+      // Sort numerically if sub_labels are prices ($X,XXX), otherwise alphabetically
+      const aNum=parseFloat((a.sub_label||'').replace(/[$,]/g,''));
+      const bNum=parseFloat((b.sub_label||'').replace(/[$,]/g,''));
+      if(!isNaN(aNum)&&!isNaN(bNum)) return aNum-bNum;
+      // Try date sort
+      const da=new Date((a.sub_label||'')+'2026').getTime()||0;
+      const db=new Date((b.sub_label||'')+'2026').getTime()||0;
+      if(da&&db) return da-db;
+      return(a.sub_label||'').localeCompare(b.sub_label||'');
     });
-  if(!members.length)return;
+
+  // If only 1 member (bad discovery run), degrade gracefully to single market
+  if(members.length<=1){
+    if(members.length===1) renderRightSingle(members[0].id);
+    return;
+  }
 
   const first=members[0];
   const cat=DATA.categories[first.category]||{color:'blue'};
   const col=cat.color;
-  const totalVol=fmtVol(first.vol_total||0);
 
   const rbns=RANGES.map(r=>`<button class="rbtn${r.key===selectedRange?' active '+col:''}" onclick="switchRange('multi','${gid}','${r.key}')">${r.label}</button>`).join('');
 
-  // Legend HTML
   const legendHtml=members.map((m,i)=>{
     const dotC=PALETTE[i%PALETTE.length];
     const isDim=dimmedLines.has(m.id);
+    const dA=d24h(m.history);
+    const dCls=dcls(dA);
     return`<div class="legend-item${isDim?' dimmed':''}" id="leg-${m.id}" onclick="toggleDim('${m.id}','${gid}')">
       <span class="legend-dot" style="background:${dotC}"></span>
       <span class="legend-label">${m.sub_label||m.label}</span>
       <span class="legend-prob">${pct(m.current)}</span>
+      <span style="font-size:10px;color:var(--${dCls==='up'?'up':dCls==='dn'?'down':'text3'})">${dstr(dA)}</span>
     </div>`;
   }).join('');
 
@@ -536,14 +569,14 @@ function renderRightMulti(gid, highlightId=null){
       </div>
       <div class="chart-stats">
         <div class="stats-boxes">
-          <div class="sbox"><div class="sbox-label">Scenarios</div><div class="sbox-val neu">${members.length} dates</div></div>
-          <div class="sbox"><div class="sbox-label">Vol total</div><div class="sbox-val vol">${totalVol}</div></div>
+          <div class="sbox"><div class="sbox-label">Scenarios</div><div class="sbox-val neu">${members.length}</div></div>
+          <div class="sbox"><div class="sbox-label">Vol total</div><div class="sbox-val vol">${fmtVol(first.vol_total||first.vol_24h)}</div></div>
           <div class="sbox"><div class="sbox-label">Vol 24h</div><div class="sbox-val vol">${fmtVol(first.vol_24h)}</div></div>
         </div>
       </div>
       <div class="multi-legend">${legendHtml}</div>
       <div class="range-row">
-        <span class="range-label">Historical Probability by Date</span>
+        <span class="range-label">Historical Probability by Scenario</span>
         <div class="range-btns">${rbns}</div>
       </div>
       <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
