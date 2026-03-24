@@ -26,6 +26,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      fix_outcomes:
+        description: 'Fix outcome=No markets in markets_config (wrong prices)?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -63,6 +69,17 @@ jobs:
         run: |
           echo "=== backfill_history.py (new markets only) ==="
           python backfill_history.py --days 365 --min-pts 100
+
+      # ── Fix outcome=No markets (wrong prices showing) ─────────────────────
+      - name: Fix outcome=No markets in markets_config
+        if: github.event.inputs.fix_outcomes == 'true'
+        run: |
+          echo "=== fix_outcomes.py --apply ==="
+          python fix_outcomes.py --apply
+          echo "=== clean_history.py --apply ==="
+          python clean_history.py --apply
+          echo "=== backfill_history.py --force ==="
+          python backfill_history.py --days 365 --force
 
       # ── Clean corrupted history then re-backfill ──────────────────────────
       - name: Clean corrupted history + re-backfill
