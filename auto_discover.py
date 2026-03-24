@@ -78,6 +78,8 @@ KEYWORD_MAP = {
         "natural gas", "copper price", "silver price",
         "stock market", "bear market", "bull market",
         "market crash", "market high", "all time high",
+        "settle at", "close at in", "close at end",
+        "gold.*settle", "crude.*settle", "spx.*close",
     ],
 }
 
@@ -425,14 +427,18 @@ def smart_label_fn(questions: list[str]):
     return label_fn
 
 
+def is_neg_risk(e: dict) -> bool:
+    """True if this is a negRisk (mutually exclusive range) event."""
+    return bool(e.get('negRisk'))
+
+
+def neg_risk_label(market: dict) -> str | None:
+    """Use groupItemTitle directly for negRisk range markets."""
+    return market.get('groupItemTitle') or None
+
+
 def is_multi_series(markets: list[dict]) -> bool:
-    """True if the event has ≥2 Yes/No sub-markets that are meaningfully different.
-    Detection based on shared prefix OR shared suffix — covers:
-    - Date deadlines:  'ceasefire by Mar 31 / Apr 15 / Jun 30'
-    - Price levels:    'hit $7,450 / $7,700 / $6,600'
-    - Entity variants: 'UAE strike Iran / Israel strike Iran / US strike Iran'
-    - Action variants: 'Fed cut 25bps / hold / hike after June meeting'
-    """
+    """True if the event has ≥2 Yes/No sub-markets that are meaningfully different."""
     yes_no = [m for m in markets
               if 'Yes' in _parse_list(m.get('outcomes', '[]'))]
     if len(yes_no) < 2:
@@ -442,11 +448,9 @@ def is_multi_series(markets: list[dict]) -> bool:
     prefix_len = _common_prefix_len(questions)
     suffix_len  = _common_suffix_len(questions)
 
-    # Must share substantial common context (either prefix or suffix ≥ 8 chars)
     if prefix_len < 8 and suffix_len < 8:
         return False
 
-    # Each question must have a non-trivial unique diff part
     diffs = [_extract_diff(q, prefix_len, suffix_len) for q in questions]
     meaningful = [d for d in diffs if len(d) >= 2]
     return len(meaningful) >= 2
@@ -458,11 +462,26 @@ def build_result(e: dict, cls: dict) -> list[dict]:
     mid     = str(cls.get('market_id', ''))
     markets = e.get('markets', [])
 
+    # ── negRisk (mutually exclusive ranges): use groupItemTitle directly ──
+    if is_neg_risk(e):
+        active = [m for m in markets if not _is_effectively_resolved(m)]
+        if len(active) < 2:
+            active = markets
+        multi = _make_multi_from(active, e, cat, outcome,
+                                  label_fn=lambda m_dict: neg_risk_label(m_dict)
+                                  if isinstance(m_dict, dict)
+                                  else neg_risk_label({'groupItemTitle': None}))
+        # _make_multi_from passes question string to label_fn, but we need the market dict
+        # Use a dedicated helper instead:
+        multi = _make_multi_neg_risk(active, e, cat, outcome)
+        if multi and len(multi) >= 2:
+            return multi
+
+    # ── standard multi-series ──
     if is_multi_series(markets):
-        # Filter out effectively resolved sub-markets before building group
         active_markets = [m for m in markets if not _is_effectively_resolved(m)]
         if len(active_markets) < 2:
-            active_markets = markets  # don't over-filter; fall through
+            active_markets = markets
 
         yes_no    = [m for m in active_markets if outcome in _parse_list(m.get('outcomes', '[]'))]
         questions = [m.get('question', '') for m in yes_no]
@@ -473,6 +492,83 @@ def build_result(e: dict, cls: dict) -> list[dict]:
                 return multi
 
     # Single-market fallback — pick the best (non-resolved) market
+    best = _pick_best_market(markets, outcome)
+    if not best:
+        best = next((m for m in markets if str(m.get('id')) == mid), None)
+    if not best and markets:
+        best = markets[0]
+    if not best:
+        return []
+    return [_make_single(e, cat, best, outcome)]
+
+
+def _make_multi_neg_risk(markets_list: list[dict], e: dict, cat: str, outcome: str) -> list[dict]:
+    """Build multi-series for negRisk (mutually exclusive range) events.
+    Uses groupItemTitle as the label — clean, authoritative range labels from Polymarket.
+    """
+    group_id = _make_id(e.get('title', ''))
+    slug     = e.get('slug') or e.get('ticker') or ''
+    results  = []
+
+    for m in markets_list:
+        outcomes = _parse_list(m.get('outcomes', '[]'))
+        tokens   = _parse_list(m.get('clobTokenIds', '[]'))
+        if outcome not in outcomes:
+            continue
+
+        sub_label = m.get('groupItemTitle') or None
+        if not sub_label:
+            # Fallback: extract from question
+            q = m.get('question', '')
+            sub_label = _extract_range_label(q) or smart_label_fn([q])(q)
+        if not sub_label:
+            continue
+
+        token_id = None
+        for o, t in zip(outcomes, tokens):
+            if o == outcome:
+                token_id = t
+                break
+
+        sub_id = (group_id + '_' + _make_id(sub_label))[:60]
+        results.append({
+            "id":            sub_id,
+            "group_id":      group_id,
+            "event_id":      e['id'],
+            "category":      cat,
+            "label":         e.get('title', ''),
+            "sub_label":     sub_label,
+            "question":      m.get('question', ''),
+            "market_id":     m.get('id'),
+            "outcome":       outcome,
+            "clob_token_id": token_id,
+            "polymarket_url":f"https://polymarket.com/event/{slug}",
+            "volume":        round(float(e.get('volume') or 0)),
+            "volume_24h":    round(float(e.get('volume24hr') or 0)),
+            "liquidity":     round(float(e.get('liquidity') or 0)),
+        })
+
+    # Sort by the range label (< first, then ascending, > last)
+    def sort_key(r):
+        lbl = r['sub_label'] or ''
+        if lbl.startswith('<'): return (-1, 0)
+        if lbl.startswith('>'): return (999999, 0)
+        m = re.search(r'\$?([\d,]+)', lbl)
+        if m:
+            return (int(m.group(1).replace(',', '')), 0)
+        return (0, lbl)
+    results.sort(key=sort_key)
+
+    return results if len(results) >= 2 else []
+
+
+def _extract_range_label(question: str) -> str | None:
+    """Extract a range label like '$6,400-$6,500' or '<$6,400' or '>$7,300' from a question."""
+    # Range: $X,XXX-$Y,YYY
+    m = re.search(r'[<>]?\$[\d,]+(?:\s*-\s*\$[\d,]+)?', question)
+    if m:
+        return m.group(0).strip()
+    return None
     best = _pick_best_market(markets, outcome)
     if not best:
         # last resort: market_id from GPT
@@ -532,7 +628,7 @@ def _make_multi(e: dict, cat: str, outcome: str, label_fn=None) -> list[dict]:
 
 
 def _is_effectively_resolved(market: dict) -> bool:
-    """Return True if a market is effectively resolved (≥99% or ≤1%)."""
+    """Return True if a market is effectively resolved (≥95% or ≤5%)."""
     prices = market.get('outcomePrices', '[]')
     if isinstance(prices, str):
         try: prices = json.loads(prices)
@@ -545,7 +641,7 @@ def _is_effectively_resolved(market: dict) -> bool:
         if o in ('Yes', 'No'):
             try:
                 v = float(p)
-                if v >= 0.99 or v <= 0.01:
+                if v >= 0.95 or v <= 0.05:
                     return True
             except: pass
     return False
@@ -660,6 +756,13 @@ def keyword_fallback_single(e: dict) -> list[dict]:
     if not markets:
         return []
 
+    # negRisk first
+    if is_neg_risk(e):
+        active = [m for m in markets if not _is_effectively_resolved(m)]
+        if len(active) < 2: active = markets
+        multi = _make_multi_neg_risk(active, e, cat, 'Yes')
+        if multi: return multi
+
     active = [m for m in markets if not _is_effectively_resolved(m)]
     if len(active) < 2:
         active = markets
@@ -669,8 +772,7 @@ def keyword_fallback_single(e: dict) -> list[dict]:
         questions = [m.get('question', '') for m in yes_no]
         if len(questions) >= 2:
             multi = _make_multi_from(active, e, cat, 'Yes', smart_label_fn(questions))
-            if multi:
-                return multi
+            if multi: return multi
 
     best = _pick_best_market(markets, 'Yes')
     if best:
