@@ -13,7 +13,12 @@ import subprocess
 import os
 from datetime import datetime, timezone
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+GAMMA_API   = "https://gamma-api.polymarket.com"
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "markets_config.json")
+DATA_PATH   = os.path.join(os.path.dirname(__file__), "docs", "data.json")
+MAX_HISTORY = 1440   # ~30 days at 30-min intervals
+
+OPENAI_API_KEY       = os.environ.get("OPENAI_API_KEY", "")
 SUMMARY_INTERVAL_MIN = 60   # regenerate summary at most every 60 minutes
 
 
@@ -77,9 +82,6 @@ def should_refresh_summary(existing_summary: dict, now_ts: str) -> bool:
         return age_min >= SUMMARY_INTERVAL_MIN
     except Exception:
         return True
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "markets_config.json")
-DATA_PATH   = os.path.join(os.path.dirname(__file__), "docs", "data.json")
-MAX_HISTORY = 1440   # ~30 days at 30-min intervals
 
 
 def curl(url, timeout=15):
